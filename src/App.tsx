@@ -40,6 +40,8 @@ import { IconGrid } from "./components/IconGrid";
 import { GroupedIconGrid } from "./components/GroupedIconGrid";
 import { HomeView } from "./components/HomeView";
 
+declare const __APP_VERSION__: string;
+
 const NAV_ITEMS = [
   { key: "home", label: "Home", icon: "home" },
   { key: "all", label: "All icons", icon: "grid" },
@@ -269,17 +271,26 @@ export function App() {
   }, [activeGroup, setsMeta, groupsMeta]);
 
   // === Filter pipeline ===
+  // Collapse favorites/recents into a single "active filter set" so that
+  // toggling a favorite or bumping recents doesn't invalidate `baseFiltered`
+  // when the user is on a different nav (e.g. "All"). Without this, every
+  // click — which updates `recents` — would produce a new `filtered` array
+  // reference, causing IconGrid to reset its scroll and bounce the selected
+  // icon to the bottom of the viewport.
+  const navFilterSet = useMemo<Set<string> | null>(() => {
+    if (activeNav === "favorites") return favoritesSet;
+    if (activeNav === "recents") return recentsSet;
+    return null;
+  }, [activeNav, favoritesSet, recentsSet]);
+
   // baseFiltered: all filters except tag chips. Tag aggregation is computed
   // from this so toggling a tag doesn't make the other tags disappear.
   const baseFiltered = useMemo(() => {
     const q = deferredQuery.trim().toLowerCase();
     const out: IconRecord[] = [];
-    const useFavSet = activeNav === "favorites";
-    const useRecentsSet = activeNav === "recents";
     for (let i = 0; i < icons.length; i++) {
       const ic = icons[i];
-      if (useFavSet && !favoritesSet.has(ic.key)) continue;
-      if (useRecentsSet && !recentsSet.has(ic.key)) continue;
+      if (navFilterSet && !navFilterSet.has(ic.key)) continue;
       if (activeSet != null && ic.set_id !== activeSet) continue;
       if (allowedSetIds && (ic.set_id == null || !allowedSetIds.has(ic.set_id))) continue;
       if (activeStyle != null && ic.style !== activeStyle) continue;
@@ -290,12 +301,10 @@ export function App() {
   }, [
     icons,
     deferredQuery,
-    activeNav,
     activeSet,
     activeStyle,
     allowedSetIds,
-    favoritesSet,
-    recentsSet,
+    navFilterSet,
   ]);
 
   const splitTags = (s: string): string[] =>
@@ -607,6 +616,7 @@ export function App() {
         <div className="brand">
           <div className="brand-mark">V</div>
           <span>VibeIcons</span>
+          <span className="brand-version">v{__APP_VERSION__}</span>
         </div>
         <div className="search-bar">
           <Icon name="search" size={14} />

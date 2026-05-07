@@ -135,6 +135,18 @@ input, textarea {
   font-weight: 700;
 }
 
+.brand-version {
+  font-size: 10px;
+  font-weight: 500;
+  color: var(--text-mute);
+  letter-spacing: 0;
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  font-variant-numeric: tabular-nums;
+}
+
 .search-bar {
   flex: 1;
   max-width: 720px;
