@@ -37,12 +37,19 @@ If you change ID handling, make sure all four maps stay coherent: `icons[].set_i
 Icons, sets, groups and sources live in **IndexedDB** (`vibeicons`, schema v2) as proper records across five object stores — `icons` (keyPath `"key"` = `<source>::<name>`, with indexes on `set_id` / `source` / `style` / `name`), `sets` (keyPath `"id"`), `groups` (keyPath `"id"`), `sources` (keyPath `"name"`), and a free-form `meta` store. Tweaks, favorites and recents stay in **localStorage** under the `vibeicons.v1.*` prefix because they're tiny and benefit from synchronous reads.
 
 Loading order in `App.tsx`:
-1. `useState` initializes `icons` to `SEED_RECORDS` (seed icons run through `rehydrateLegacyIcon` once at module load to attach `key`/`search`/preprocessed `content`).
-2. A `useEffect` opens the DB, then `Promise.all`s `getAllIcons` / `getAllSets` / `getAllGroups` / `getAllSources` and replaces the seeded state. Brief flash of seed icons on first paint is the accepted tradeoff.
-3. Imports persist as **deltas** (`bulkPutIcons` / `bulkPutSets` / `bulkPutGroups` / `putSource`) — no full-array rewrites.
-4. `clearAll` calls `clearAllDb` which clears every store in one transaction.
+1. `useState` initializes `icons` to `[]`. Brief empty-grid paint on first load is acceptable.
+2. A `useEffect` opens the DB, then `Promise.all`s `getAllIcons` / `getAllSets` / `getAllGroups` / `getAllSources` and replaces state.
+3. If `icons.length === 0`, the main area renders `<LibraryEmpty>` instead of the grid — a placeholder with two CTAs ("Load Ant Design Icons" and "Import a JSON file"). There is **no** automatic import; bundled libraries load only on explicit user action.
+4. Imports persist as **deltas** (`bulkPutIcons` / `bulkPutSets` / `bulkPutGroups` / `putSource`) — no full-array rewrites.
+5. `clearAll` calls `clearAllDb` (one transaction across every store) and resets all state to empty. The user is dropped back on the `LibraryEmpty` placeholder; restoring Ant Design is a deliberate click, not magic.
 
 A v1→v2 migration path exists: when `openDb()` upgrades from version 1, it reads any legacy `kv.icons` array within the upgrade transaction, returns it as `legacyIcons`, and the post-open code calls `rehydrateLegacyIcon` + `bulkPutIcons` to write it into the new shape.
+
+### Bundled base library (Ant Design)
+
+The base library is **Ant Design Icons** (`@ant-design/icons-svg`, MIT). `scripts/build-ant-icons.mjs` reads each SVG from the package's `inline-svg/{outlined,filled,twotone}/` directories, injects `fill="currentColor"` on the root `<svg>` so the `style.color` cascade actually works (outlined ant icons have no fills set otherwise), and writes three importable JSON files plus a manifest into `public/libraries/`. The script is wired to `predev`/`prebuild` and the output dir is gitignored. Twotone icons render monochrome because the preprocessor collapses both fill colors to `currentColor` — that's an accepted tradeoff. Each theme becomes its own `source` (`Ant Design Outlined` / `Ant Design Filled` / `Ant Design TwoTone`), which keeps icon names like `home` distinct across themes via the composite key and makes the Variations panel light up naturally.
+
+Loading is triggered manually by `App.tsx::loadBundledLibraries` — exposed to `LibraryEmpty` (CTA on the placeholder) and `SettingsModal` (button under "Bundled icon library"). The function fetches `libraries/index.json`, then for each entry skips already-loaded sources and feeds the rest into the regular `handleImport` path with a shared `taken` set. `bundledLoading` state drives the disabled+spinner state on both buttons. Result: idempotent on repeat clicks, never silently expands the library behind the user's back.
 
 ### Rendering imported SVG
 
@@ -75,3 +82,4 @@ Two project refs (`tsconfig.app.json` for `src/`, `tsconfig.node.json` for `vite
 - No `tweaks-panel.jsx` from the design bundle — that was Claude Design's hot-tweak overlay, not a product feature. Theme/density/accent/labels are reachable via the topbar buttons, density segment in the toolbar, and Settings modal.
 - No router. The whole app is one screen with side panels.
 - No state library. `useState` + `useMemo` are sufficient at this size; resist adding Zustand/Redux unless complexity warrants it.
+- No `seed.ts`. The earlier hand-rolled placeholder records were removed when Ant Design became the bundled base library — `clearAll` now restores Ant Design rather than a synthetic seed set.

@@ -1,20 +1,24 @@
 {
   "name": "vibeicons",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "VibeIcons — Icon Manager PWA",
   "scripts": {
+    "predev": "node scripts/build-ant-icons.mjs",
     "dev": "vite",
+    "prebuild": "node scripts/build-ant-icons.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
-    "typecheck": "tsc -b --noEmit"
+    "typecheck": "tsc -b --noEmit",
+    "build:icons": "node scripts/build-ant-icons.mjs"
   },
   "dependencies": {
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },
   "devDependencies": {
+    "@ant-design/icons-svg": "^4.4.2",
     "@types/react": "^19.1.0",
     "@types/react-dom": "^19.1.0",
     "@vitejs/plugin-react": "^5.0.0",

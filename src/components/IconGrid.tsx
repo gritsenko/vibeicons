@@ -1,4 +1,4 @@
-import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { IconRecord } from "../types";
 import { Icon } from "./Icon";
 import { RenderedIcon } from "./RenderedIcon";
@@ -27,26 +27,30 @@ export function IconGrid({
   onSelect,
   onToggleFav,
 }: Props) {
-  const scrollRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLDivElement>(null);
+  // Callback refs: when items goes 0 → N, the empty-state branch unmounts and
+  // the virt containers mount. State-backed refs let useLayoutEffect re-run as
+  // soon as both elements attach, otherwise the very first render captures
+  // null refs, leaves width=0 and cols=1, and we get a single vertical column.
+  const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
+  const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
+  const setScrollRef = useCallback((el: HTMLDivElement | null) => setScrollEl(el), []);
+  const setCanvasRef = useCallback((el: HTMLDivElement | null) => setCanvasEl(el), []);
   const [width, setWidth] = useState(0);
   const [viewportH, setViewportH] = useState(0);
   const [scrollTop, setScrollTop] = useState(0);
 
   useLayoutEffect(() => {
-    const scroll = scrollRef.current;
-    const canvas = canvasRef.current;
-    if (!scroll || !canvas) return;
+    if (!scrollEl || !canvasEl) return;
     const update = () => {
-      setWidth(canvas.clientWidth);
-      setViewportH(scroll.clientHeight);
+      setWidth(canvasEl.clientWidth);
+      setViewportH(scrollEl.clientHeight);
     };
     update();
     const ro = new ResizeObserver(update);
-    ro.observe(scroll);
-    ro.observe(canvas);
+    ro.observe(scrollEl);
+    ro.observe(canvasEl);
     return () => ro.disconnect();
-  }, []);
+  }, [scrollEl, canvasEl]);
 
   const cols =
     width > 0 ? Math.max(1, Math.floor((width + GAP) / (tileMin + GAP))) : 1;
@@ -68,31 +72,28 @@ export function IconGrid({
   useEffect(() => {
     if (lastItemsRef.current !== items) {
       lastItemsRef.current = items;
-      const el = scrollRef.current;
-      if (el && el.scrollTop > 0) {
-        el.scrollTop = 0;
+      if (scrollEl && scrollEl.scrollTop > 0) {
+        scrollEl.scrollTop = 0;
         setScrollTop(0);
       }
     }
-  }, [items]);
+  }, [items, scrollEl]);
 
   // Keep the selected tile in view when navigated by keyboard (selectedKey
   // changes from outside the grid).
   useEffect(() => {
-    if (!selectedKey || items.length === 0 || cols === 0) return;
+    if (!selectedKey || items.length === 0 || cols === 0 || !scrollEl) return;
     const idx = items.findIndex((i) => i.key === selectedKey);
     if (idx < 0) return;
     const row = Math.floor(idx / cols);
     const top = row * rowHeight;
     const bottom = top + tileSize;
-    const el = scrollRef.current;
-    if (!el) return;
-    if (top < el.scrollTop) {
-      el.scrollTop = top;
-    } else if (bottom > el.scrollTop + el.clientHeight) {
-      el.scrollTop = bottom - el.clientHeight;
+    if (top < scrollEl.scrollTop) {
+      scrollEl.scrollTop = top;
+    } else if (bottom > scrollEl.scrollTop + scrollEl.clientHeight) {
+      scrollEl.scrollTop = bottom - scrollEl.clientHeight;
     }
-  }, [selectedKey, cols, rowHeight, tileSize, items]);
+  }, [selectedKey, cols, rowHeight, tileSize, items, scrollEl]);
 
   const cells = useMemo(() => {
     if (items.length === 0 || cols === 0) return null;
@@ -149,11 +150,11 @@ export function IconGrid({
 
   return (
     <div
-      ref={scrollRef}
+      ref={setScrollRef}
       className="virt-scroll"
       onScroll={(e) => setScrollTop((e.target as HTMLDivElement).scrollTop)}
     >
-      <div ref={canvasRef} className="virt-canvas" style={{ height: totalHeight }}>
+      <div ref={setCanvasRef} className="virt-canvas" style={{ height: totalHeight }}>
         {cells}
       </div>
     </div>
