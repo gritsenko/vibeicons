@@ -1,0 +1,20 @@
+{
+  "name": "VibeIcons — Icon Manager",
+  "short_name": "VibeIcons",
+  "description": "Icon manager PWA: import SVG-icon JSON libraries, search, recolor, preview on dark/light, copy code, download SVG/PNG.",
+  "start_url": "/vibeicons/",
+  "scope": "/vibeicons/",
+  "id": "/vibeicons/",
+  "display": "standalone",
+  "background_color": "#f6f7f9",
+  "theme_color": "#F97316",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "favicon.svg",
+      "type": "image/svg+xml",
+      "sizes": "any",
+      "purpose": "any maskable"
+    }
+  ]
+}

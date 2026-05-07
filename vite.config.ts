@@ -1,0 +1,15 @@
+import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  base: "/vibeicons/",
+  plugins: [react()],
+  server: {
+    port: 5173,
+    open: false,
+  },
+  build: {
+    target: "es2022",
+    sourcemap: true,
+  },
+});
