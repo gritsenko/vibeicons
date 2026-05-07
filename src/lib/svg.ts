@@ -14,6 +14,42 @@ export function colorizeContent(svgString: string, color: string): string {
     .replace(/fill='(?!none')[^']*'/g, `fill='${color}'`);
 }
 
+const RX_SVG_OPEN = /<svg\b([^>]*)>/i;
+const RX_WIDTH = /\s+width="[^"]*"/i;
+const RX_HEIGHT = /\s+height="[^"]*"/i;
+const RX_VIEWBOX = /viewBox="[^"]*"/i;
+const RX_PRESERVE = /preserveAspectRatio="[^"]*"/i;
+
+/**
+ * One-shot SVG normalization done at import time so per-render rewrites are
+ * unnecessary. Strips width/height, ensures viewBox + preserveAspectRatio, and
+ * rewrites every `fill="..."` (except `fill="none"`) to `currentColor`. The
+ * resulting markup picks up its color from the parent's `style.color`.
+ */
+export function preprocessSvgContent(content: string, w?: number, h?: number): string {
+  if (!content) return content;
+  let out = content;
+
+  out = out.replace(RX_SVG_OPEN, (_match, attrs: string) => {
+    let a = attrs;
+    a = a.replace(RX_WIDTH, "");
+    a = a.replace(RX_HEIGHT, "");
+    if (!RX_PRESERVE.test(a)) a += ' preserveAspectRatio="xMidYMid meet"';
+    if (!RX_VIEWBOX.test(a)) {
+      const vw = Number(w) || 24;
+      const vh = Number(h) || 24;
+      a += ` viewBox="0 0 ${vw} ${vh}"`;
+    }
+    return `<svg${a}>`;
+  });
+
+  // currentColor swap (skip fill="none" / fill='none')
+  out = out.replace(/fill="(?!none")[^"]*"/g, 'fill="currentColor"');
+  out = out.replace(/fill='(?!none')[^']*'/g, "fill='currentColor'");
+
+  return out;
+}
+
 export function downloadBlob(name: string, blob: Blob): void {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);

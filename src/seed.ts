@@ -1,6 +1,9 @@
 import type { IconRecord } from "./types";
 
-export const SEED_ICONS: IconRecord[] = [
+/** Raw seed shape — `key`/`search` are filled in by `rehydrateLegacyIcon` at app start. */
+export type SeedIcon = Omit<IconRecord, "key" | "search">;
+
+export const SEED_ICONS: SeedIcon[] = [
   {
     style: "glyph",
     width: 48,

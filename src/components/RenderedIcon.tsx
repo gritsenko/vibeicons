@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { memo } from "react";
 import type { IconRecord } from "../types";
 
 interface Props {
@@ -7,45 +7,35 @@ interface Props {
   color: string;
 }
 
-export function RenderedIcon({ icon, size = null, color }: Props) {
-  const ref = useRef<HTMLSpanElement>(null);
-
-  useEffect(() => {
-    const host = ref.current;
-    if (!host || !icon) return;
-    host.innerHTML = icon.content;
-    const svg = host.querySelector("svg");
-    if (!svg) return;
-    svg.removeAttribute("width");
-    svg.removeAttribute("height");
-    svg.setAttribute("preserveAspectRatio", "xMidYMid meet");
-    if (!svg.getAttribute("viewBox")) {
-      const w = Number(icon.width) || 24;
-      const h = Number(icon.height) || 24;
-      svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
-    }
-    const sizePx = size != null ? `${size}px` : "100%";
-    svg.style.width = sizePx;
-    svg.style.height = sizePx;
-    svg.style.color = color;
-    svg.style.display = "block";
-    svg.style.margin = "auto";
-    svg.querySelectorAll("[fill]").forEach((el) => {
-      el.setAttribute("fill", "currentColor");
-    });
-  }, [icon, size, color]);
-
+/**
+ * SVG content is pre-normalized at import time (see preprocessSvgContent),
+ * so we just inject it once via innerHTML and let `style.color` propagate
+ * through `currentColor`. No per-render attribute mutation.
+ */
+function RenderedIconImpl({ icon, size = null, color }: Props) {
+  const dim = size != null ? `${size}px` : "100%";
   return (
     <span
-      ref={ref}
+      className="icon-render"
       style={{
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        width: "100%",
-        height: "100%",
+        width: dim,
+        height: dim,
         lineHeight: 0,
+        color,
       }}
+      // content is sanitized at import time and trusted by design
+      dangerouslySetInnerHTML={{ __html: icon.content }}
     />
   );
 }
+
+export const RenderedIcon = memo(RenderedIconImpl, (prev, next) => {
+  return (
+    prev.icon.key === next.icon.key &&
+    prev.color === next.color &&
+    prev.size === next.size
+  );
+});

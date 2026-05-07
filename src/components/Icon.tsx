@@ -20,6 +20,8 @@ const PATHS: Record<string, string> = {
     "M12 2C6 2 2 6 2 12c0 5 4 9 9 9 1.5 0 2-1 2-2 0-.5-.3-1-.6-1.4-.4-.5-.6-1-.6-1.6 0-1 .8-2 2-2h2c2.8 0 5-2.2 5-5C21 5 17 2 12 2z",
   check: "M5 13l4 4L19 7",
   trash: "M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6",
+  home: "M3 11l9-8 9 8M5 9v11h5v-6h4v6h5V9",
+  rows: "M3 5h18M3 12h18M3 19h18",
 };
 
 interface Props {

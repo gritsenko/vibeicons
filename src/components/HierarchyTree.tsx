@@ -67,6 +67,17 @@ export function HierarchyTree({
     const total = countTotal(g.id);
     if (total === 0 && subgroups.length === 0 && groupSets.length === 0) return null;
 
+    // Collapse the synthetic per-source library wrapper when it just contains
+    // a single child group with the same label (e.g. "Core Line" → "Core Line").
+    if (
+      String(g.id).endsWith(":__lib") &&
+      groupSets.length === 0 &&
+      subgroups.length === 1 &&
+      (subgroups[0].label || "") === (g.label || "")
+    ) {
+      return renderGroup(subgroups[0], depth);
+    }
+
     return (
       <div key={"g" + g.id}>
         <div

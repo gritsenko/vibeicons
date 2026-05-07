@@ -1,7 +1,10 @@
 export type IconStyle = "glyph" | "line" | "outline" | "solid" | "other" | string;
 
 export interface IconRecord {
+  /** Composite primary key: "<source>::<name>" (source falls back to ""). */
+  key: string;
   name: string;
+  /** SVG markup, pre-normalized at import time (width/height stripped, viewBox set, fill="currentColor"). */
   content: string;
   style: IconStyle;
   width: number;
@@ -9,6 +12,8 @@ export interface IconRecord {
   set_id: string | number | null;
   tags: string;
   source: string | null;
+  /** Lowercased haystack for substring search (name + tags + source). */
+  search: string;
 }
 
 export interface SetMeta {

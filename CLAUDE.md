@@ -34,16 +34,27 @@ If you change ID handling, make sure all four maps stay coherent: `icons[].set_i
 
 ### Storage split
 
-Icons go to **IndexedDB** (`vibeicons` / store `kv` / key `"icons"`); everything else (`tweaks`, `setsMeta`, `groupsMeta`, `sources`, `favs`, `recents`) goes to **localStorage** under the `vibeicons.v1.*` prefix. Reason: full icon libraries can easily exceed the ~5 MB localStorage quota; metadata can't.
+Icons, sets, groups and sources live in **IndexedDB** (`vibeicons`, schema v2) as proper records across five object stores — `icons` (keyPath `"key"` = `<source>::<name>`, with indexes on `set_id` / `source` / `style` / `name`), `sets` (keyPath `"id"`), `groups` (keyPath `"id"`), `sources` (keyPath `"name"`), and a free-form `meta` store. Tweaks, favorites and recents stay in **localStorage** under the `vibeicons.v1.*` prefix because they're tiny and benefit from synchronous reads.
 
 Loading order in `App.tsx`:
-1. `useState` initializers synchronously read localStorage and seed `icons` with `SEED_ICONS` if nothing's there.
-2. A `useEffect` opens IDB and, if it has icons, **overwrites** the seeded state. This means there's a brief flash of seed icons on first paint when the user has IDB data — accepted tradeoff.
-3. Every `icons` change triggers `saveIconsToDb`, which falls back to localStorage if IDB is unavailable.
+1. `useState` initializes `icons` to `SEED_RECORDS` (seed icons run through `rehydrateLegacyIcon` once at module load to attach `key`/`search`/preprocessed `content`).
+2. A `useEffect` opens the DB, then `Promise.all`s `getAllIcons` / `getAllSets` / `getAllGroups` / `getAllSources` and replaces the seeded state. Brief flash of seed icons on first paint is the accepted tradeoff.
+3. Imports persist as **deltas** (`bulkPutIcons` / `bulkPutSets` / `bulkPutGroups` / `putSource`) — no full-array rewrites.
+4. `clearAll` calls `clearAllDb` which clears every store in one transaction.
+
+A v1→v2 migration path exists: when `openDb()` upgrades from version 1, it reads any legacy `kv.icons` array within the upgrade transaction, returns it as `legacyIcons`, and the post-open code calls `rehydrateLegacyIcon` + `bulkPutIcons` to write it into the new shape.
 
 ### Rendering imported SVG
 
-`RenderedIcon.tsx` injects raw SVG via `innerHTML` (the `content` field is trusted) and then mutates the `<svg>` imperatively each render: strips `width`/`height`, forces `preserveAspectRatio="xMidYMid meet"`, infers `viewBox` from `width`/`height` if missing, sets `style.color`, and rewrites every `[fill]` attribute to `currentColor`. The recolor in the detail panel works by setting `style.color` on the parent — it does **not** mutate the SVG string. The SVG string is only colorized via regex (`lib/svg.ts::colorizeContent`) for download/copy, where `currentColor` wouldn't survive.
+SVG content is **preprocessed once at import time** by `lib/svg.ts::preprocessSvgContent`: strips `width`/`height`, sets `preserveAspectRatio="xMidYMid meet"`, infers a `viewBox` from `width`/`height` if missing, and rewrites every non-`none` `fill="..."` to `fill="currentColor"`. The processed string is what's stored in IDB, so `RenderedIcon.tsx` just `dangerouslySetInnerHTML`s it once and lets `style.color` cascade via `currentColor`. No per-render attribute mutation. `RenderedIcon` is wrapped in `React.memo` keyed on `icon.key + size + color`. For download/copy, `colorizeContent` swaps `currentColor` (and any other non-`none` fill) to a literal hex.
+
+### Virtualized grid
+
+`components/IconGrid.tsx` is a dependency-free virtualized grid: a `ResizeObserver` measures the canvas width to compute `cols = floor((width + GAP) / (tileMin + GAP))`, an `onScroll` handler tracks `scrollTop`, and only the visible row range ± `ROW_BUFFER` is rendered. Each `Tile` is `React.memo`'d. `tileMin` comes from a per-density map (compact 64 / comfortable 88 / spacious 112). Selection is tracked by `selectedKey` (a stable composite string), not by index, so changing filters never points "selected" at the wrong icon.
+
+### Search index
+
+Each `IconRecord` carries a precomputed `search` field — a lowercased concatenation of `name + " " + tags + " " + source`, built by `lib/icons.ts::buildSearch` at import / rehydrate time. The filter loop uses `useDeferredValue(query)` (React 19) and runs `ic.search.includes(q)` instead of building the haystack on every keystroke, so typing stays responsive even at 5000+ icons.
 
 ### Filter pipeline
 

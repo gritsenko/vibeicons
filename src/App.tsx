@@ -1,30 +1,47 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import type {
+  GroupMeta,
   GroupsMetaMap,
   IconRecord,
   ImportFile,
+  SetMeta,
   SetsMetaMap,
+  SourceMeta,
   SourcesMap,
   Tweaks,
 } from "./types";
 import { SEED_ICONS } from "./seed";
+import { STORAGE_KEY, clearAllStorage, readJson, writeJson } from "./lib/storage";
 import {
-  STORAGE_KEY,
-  clearAllStorage,
-  deleteIconsFromDb,
-  loadIconsFromDb,
+  bulkPutGroups,
+  bulkPutIcons,
+  bulkPutSets,
+  clearAll as clearAllDb,
+  getAllGroups,
+  getAllIcons,
+  getAllSets,
+  getAllSources,
   openDb,
-  readJson,
-  saveIconsToDb,
-  writeJson,
-} from "./lib/storage";
+  putSource,
+} from "./lib/db";
+import { iconKey, normalizeImportedIcon, rehydrateLegacyIcon } from "./lib/icons";
 import { Icon } from "./components/Icon";
-import { RenderedIcon } from "./components/RenderedIcon";
 import { HierarchyTree } from "./components/HierarchyTree";
 import { DetailPanel } from "./components/DetailPanel";
 import { SettingsModal } from "./components/SettingsModal";
+import { IconGrid } from "./components/IconGrid";
+import { GroupedIconGrid } from "./components/GroupedIconGrid";
+import { HomeView } from "./components/HomeView";
 
 const NAV_ITEMS = [
+  { key: "home", label: "Home", icon: "home" },
   { key: "all", label: "All icons", icon: "grid" },
   { key: "favorites", label: "Favorites", icon: "star" },
   { key: "recents", label: "Recents", icon: "clock" },
@@ -39,103 +56,113 @@ const TWEAK_DEFAULTS: Tweaks = {
   showLabels: true,
 };
 
-function normalizeIcon(it: unknown, sourceName: string | null): IconRecord | null {
-  if (!it || typeof it !== "object") return null;
-  const obj = it as Record<string, unknown>;
-  if (!obj.name || !obj.content) return null;
-  let tags: string;
-  if (Array.isArray(obj.tags)) tags = obj.tags.join(",");
-  else if (obj.tags == null) tags = "";
-  else tags = String(obj.tags);
-  return {
-    name: String(obj.name),
-    content: String(obj.content),
-    style: (obj.style as string) || "other",
-    width: Number(obj.width) || 48,
-    height: Number(obj.height) || 48,
-    set_id: (obj.set_id as string | number | null) ?? null,
-    tags,
-    source: sourceName,
-  };
+const TILE_MIN_BY_DENSITY: Record<Tweaks["density"], number> = {
+  compact: 64,
+  comfortable: 88,
+  spacious: 112,
+};
+
+const SEED_RECORDS: IconRecord[] = SEED_ICONS.map((s) => rehydrateLegacyIcon(s)).filter(
+  (x): x is IconRecord => x !== null,
+);
+
+function toMap<T extends { id?: string | number; name?: string }>(
+  list: T[],
+  key: keyof T,
+): Record<string, T> {
+  const m: Record<string, T> = {};
+  for (const item of list) m[String(item[key])] = item;
+  return m;
 }
 
 export function App() {
-  // Tweaks
+  // === Tweaks ===
   const [tweaks, setTweaks] = useState<Tweaks>(() =>
     readJson<Tweaks>(STORAGE_KEY + ".tweaks", TWEAK_DEFAULTS),
   );
   const setTweak = <K extends keyof Tweaks>(key: K, value: Tweaks[K]) =>
     setTweaks((prev) => ({ ...prev, [key]: value }));
-
   useEffect(() => {
     writeJson(STORAGE_KEY + ".tweaks", tweaks);
   }, [tweaks]);
 
-  // Data
-  const [icons, setIcons] = useState<IconRecord[]>(() => {
-    try {
-      const raw = localStorage.getItem(STORAGE_KEY + ".icons");
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        if (Array.isArray(parsed) && parsed.length) return parsed as IconRecord[];
-      }
-    } catch {
-      /* ignore */
-    }
-    return SEED_ICONS;
-  });
-  const [setsMeta, setSetsMeta] = useState<SetsMetaMap>(() =>
-    readJson<SetsMetaMap>(STORAGE_KEY + ".setsMeta", {}),
-  );
-  const [groupsMeta, setGroupsMeta] = useState<GroupsMetaMap>(() =>
-    readJson<GroupsMetaMap>(STORAGE_KEY + ".groupsMeta", {}),
-  );
-  const [sources, setSources] = useState<SourcesMap>(() =>
-    readJson<SourcesMap>(STORAGE_KEY + ".sources", {}),
-  );
+  // === Data ===
+  const [icons, setIcons] = useState<IconRecord[]>(SEED_RECORDS);
+  const [setsMeta, setSetsMeta] = useState<SetsMetaMap>({});
+  const [groupsMeta, setGroupsMeta] = useState<GroupsMetaMap>({});
+  const [sources, setSources] = useState<SourcesMap>({});
+
+  // Favorites & recents are small (≤ a few hundred) — keep in localStorage for fast sync writes.
   const [favorites, setFavorites] = useState<string[]>(() =>
     readJson<string[]>(STORAGE_KEY + ".favs", []),
   );
   const [recents, setRecents] = useState<string[]>(() =>
     readJson<string[]>(STORAGE_KEY + ".recents", []),
   );
+  const favoritesSet = useMemo(() => new Set(favorites), [favorites]);
+  const recentsSet = useMemo(() => new Set(recents), [recents]);
 
-  // Persist
-  const idbRef = useRef<IDBDatabase | null>(null);
+  useEffect(() => writeJson(STORAGE_KEY + ".favs", favorites), [favorites]);
+  useEffect(() => writeJson(STORAGE_KEY + ".recents", recents), [recents]);
+
+  // === DB lifecycle ===
+  const dbRef = useRef<IDBDatabase | null>(null);
+
   useEffect(() => {
     let cancelled = false;
-    void openDb().then(async (db) => {
-      if (cancelled || !db) return;
-      idbRef.current = db;
-      const fromDb = await loadIconsFromDb(db);
-      if (fromDb) setIcons(fromDb);
-    });
+    void (async () => {
+      const opened = await openDb();
+      if (cancelled) return;
+      if (!opened) return;
+      dbRef.current = opened.db;
+
+      const [iconList, setList, groupList, sourceList] = await Promise.all([
+        getAllIcons(opened.db),
+        getAllSets(opened.db),
+        getAllGroups(opened.db),
+        getAllSources(opened.db),
+      ]);
+
+      // If the DB has nothing yet but we got legacy icons via the v1→v2 upgrade,
+      // adopt those and persist them in the new shape.
+      let effectiveIcons = iconList;
+      if (effectiveIcons.length === 0 && opened.legacyIcons && opened.legacyIcons.length) {
+        effectiveIcons = opened.legacyIcons;
+        try {
+          await bulkPutIcons(opened.db, effectiveIcons);
+        } catch {
+          /* ignore */
+        }
+      }
+
+      if (cancelled) return;
+      if (effectiveIcons.length > 0) setIcons(effectiveIcons);
+      if (setList.length > 0) setSetsMeta(toMap(setList, "id"));
+      if (groupList.length > 0) setGroupsMeta(toMap(groupList, "id"));
+      if (sourceList.length > 0) setSources(toMap(sourceList, "name"));
+    })();
     return () => {
       cancelled = true;
     };
   }, []);
 
-  useEffect(() => {
-    saveIconsToDb(idbRef.current, icons);
-  }, [icons]);
-  useEffect(() => writeJson(STORAGE_KEY + ".setsMeta", setsMeta), [setsMeta]);
-  useEffect(() => writeJson(STORAGE_KEY + ".groupsMeta", groupsMeta), [groupsMeta]);
-  useEffect(() => writeJson(STORAGE_KEY + ".sources", sources), [sources]);
-  useEffect(() => writeJson(STORAGE_KEY + ".favs", favorites), [favorites]);
-  useEffect(() => writeJson(STORAGE_KEY + ".recents", recents), [recents]);
-
-  // UI state
+  // === UI state ===
   const [query, setQuery] = useState("");
+  const deferredQuery = useDeferredValue(query);
   const [activeNav, setActiveNav] = useState<NavKey>("all");
   const [activeSet, setActiveSet] = useState<string | number | null>(null);
   const [activeGroup, setActiveGroup] = useState<string | number | null>(null);
-  const [activeSource, setActiveSource] = useState<string | null>(null);
   const [activeStyle, setActiveStyle] = useState<string | null>(null);
-  const [selectedIdx, setSelectedIdx] = useState(0);
+  const [activeTags, setActiveTags] = useState<string[]>([]);
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
   const [color, setColor] = useState("#F7F7F7");
   const [toast, setToast] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const [groupBy, setGroupBy] = useState<boolean>(() =>
+    readJson<boolean>(STORAGE_KEY + ".groupBy", false),
+  );
+  useEffect(() => writeJson(STORAGE_KEY + ".groupBy", groupBy), [groupBy]);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
   const toggleGroupExpand = useCallback((id: string | number) => {
@@ -148,7 +175,7 @@ export function App() {
   }, []);
 
   const clearAll = useCallback(() => {
-    setIcons(SEED_ICONS);
+    setIcons(SEED_RECORDS);
     setSetsMeta({});
     setGroupsMeta({});
     setSources({});
@@ -156,16 +183,17 @@ export function App() {
     setRecents([]);
     setActiveSet(null);
     setActiveGroup(null);
-    setActiveSource(null);
     setActiveStyle(null);
+    setActiveTags([]);
     setActiveNav("all");
+    setSelectedKey(null);
     clearAllStorage();
-    deleteIconsFromDb(idbRef.current);
+    if (dbRef.current) void clearAllDb(dbRef.current);
     setShowSettings(false);
     showToast("All data cleared");
   }, [showToast]);
 
-  // Theme & accent
+  // === Theme & accent ===
   useEffect(() => {
     document.documentElement.dataset.theme = tweaks.theme;
     document.documentElement.dataset.density = tweaks.density;
@@ -174,91 +202,165 @@ export function App() {
     document.documentElement.style.setProperty("--accent-soft", tweaks.accent + "26");
   }, [tweaks.theme, tweaks.density, tweaks.accent]);
 
-  // Aggregations
+  // === Aggregations & indexes (single pass over icons) ===
+  const aggregates = useMemo(() => {
+    const setCounts = new Map<string | number, number>();
+    const styleCounts = new Map<string, number>();
+    const sourceCounts = new Map<string, number>();
+    const byName = new Map<string, IconRecord[]>();
+    const keyToIndex = new Map<string, number>();
+    for (let i = 0; i < icons.length; i++) {
+      const ic = icons[i];
+      const sk: string | number = ic.set_id ?? "—";
+      setCounts.set(sk, (setCounts.get(sk) ?? 0) + 1);
+      const st = ic.style || "other";
+      styleCounts.set(st, (styleCounts.get(st) ?? 0) + 1);
+      if (ic.source) sourceCounts.set(ic.source, (sourceCounts.get(ic.source) ?? 0) + 1);
+      const list = byName.get(ic.name);
+      if (list) list.push(ic);
+      else byName.set(ic.name, [ic]);
+      keyToIndex.set(ic.key, i);
+    }
+    return { setCounts, styleCounts, sourceCounts, byName, keyToIndex };
+  }, [icons]);
+
   const sets = useMemo(() => {
-    const m = new Map<string | number, number>();
-    icons.forEach((i) => {
-      const k: string | number = i.set_id ?? "—";
-      m.set(k, (m.get(k) ?? 0) + 1);
-    });
-    return [...m.entries()].sort((a, b) => {
+    return [...aggregates.setCounts.entries()].sort((a, b) => {
       const la = setsMeta[String(a[0])]?.label ?? "Set " + a[0];
       const lb = setsMeta[String(b[0])]?.label ?? "Set " + b[0];
       return la.localeCompare(lb);
     });
-  }, [icons, setsMeta]);
+  }, [aggregates.setCounts, setsMeta]);
+
+  const styles = useMemo(
+    () => [...aggregates.styleCounts.entries()],
+    [aggregates.styleCounts],
+  );
 
   const setLabel = useCallback(
     (id: string | number | null) => setsMeta[String(id)]?.label ?? "Set " + id,
     [setsMeta],
   );
 
-  const styles = useMemo(() => {
-    const m = new Map<string, number>();
-    icons.forEach((i) => m.set(i.style || "other", (m.get(i.style || "other") ?? 0) + 1));
-    return [...m.entries()];
-  }, [icons]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    let allowedSetIds: Set<string | number> | null = null;
-    if (activeGroup != null) {
-      allowedSetIds = new Set();
-      const collect = (gid: string | number) => {
-        Object.values(setsMeta).forEach((s) => {
-          if (s.group_id === gid) allowedSetIds!.add(s.id);
-        });
-        Object.values(groupsMeta).forEach((g) => {
-          if (g.group_id === gid) collect(g.id);
-        });
-      };
-      collect(activeGroup);
+  // Resolve activeGroup → set of allowed set_ids (recursive)
+  const allowedSetIds = useMemo(() => {
+    if (activeGroup == null) return null;
+    const out = new Set<string | number>();
+    const childSets = new Map<string | number | null, SetMeta[]>();
+    for (const s of Object.values(setsMeta)) {
+      const p = s.group_id ?? null;
+      const arr = childSets.get(p);
+      if (arr) arr.push(s);
+      else childSets.set(p, [s]);
     }
-    return icons.filter((i) => {
-      const favKey = (i.source ?? "") + "::" + i.name;
-      if (activeNav === "favorites" && !favorites.includes(favKey)) return false;
-      if (activeNav === "recents" && !recents.includes(favKey)) return false;
-      if (activeSource != null && i.source !== activeSource) return false;
-      if (activeSet != null && i.set_id !== activeSet) return false;
-      if (allowedSetIds && (i.set_id == null || !allowedSetIds.has(i.set_id))) return false;
-      if (activeStyle != null && i.style !== activeStyle) return false;
-      if (!q) return true;
-      const hay = (i.name + " " + (i.tags ?? "") + " " + (i.source ?? "")).toLowerCase();
-      return hay.includes(q);
-    });
+    const childGroups = new Map<string | number | null, GroupMeta[]>();
+    for (const g of Object.values(groupsMeta)) {
+      const p = g.group_id ?? null;
+      const arr = childGroups.get(p);
+      if (arr) arr.push(g);
+      else childGroups.set(p, [g]);
+    }
+    const collect = (gid: string | number) => {
+      (childSets.get(gid) ?? []).forEach((s) => out.add(s.id));
+      (childGroups.get(gid) ?? []).forEach((sg) => collect(sg.id));
+    };
+    collect(activeGroup);
+    return out;
+  }, [activeGroup, setsMeta, groupsMeta]);
+
+  // === Filter pipeline ===
+  // baseFiltered: all filters except tag chips. Tag aggregation is computed
+  // from this so toggling a tag doesn't make the other tags disappear.
+  const baseFiltered = useMemo(() => {
+    const q = deferredQuery.trim().toLowerCase();
+    const out: IconRecord[] = [];
+    const useFavSet = activeNav === "favorites";
+    const useRecentsSet = activeNav === "recents";
+    for (let i = 0; i < icons.length; i++) {
+      const ic = icons[i];
+      if (useFavSet && !favoritesSet.has(ic.key)) continue;
+      if (useRecentsSet && !recentsSet.has(ic.key)) continue;
+      if (activeSet != null && ic.set_id !== activeSet) continue;
+      if (allowedSetIds && (ic.set_id == null || !allowedSetIds.has(ic.set_id))) continue;
+      if (activeStyle != null && ic.style !== activeStyle) continue;
+      if (q && !ic.search.includes(q)) continue;
+      out.push(ic);
+    }
+    return out;
   }, [
     icons,
-    query,
+    deferredQuery,
     activeNav,
     activeSet,
-    activeGroup,
-    activeSource,
     activeStyle,
-    favorites,
-    recents,
-    setsMeta,
-    groupsMeta,
+    allowedSetIds,
+    favoritesSet,
+    recentsSet,
   ]);
 
-  const selected = filtered[selectedIdx] ?? filtered[0] ?? null;
+  const splitTags = (s: string): string[] =>
+    s ? s.split(/[,;]/).map((t) => t.trim()).filter(Boolean) : [];
 
-  useEffect(() => {
-    if (selectedIdx >= filtered.length) setSelectedIdx(0);
-  }, [filtered.length, selectedIdx]);
+  const tagAggregate = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const ic of baseFiltered) {
+      for (const t of splitTags(ic.tags)) {
+        counts.set(t, (counts.get(t) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()].sort((a, b) =>
+      b[1] - a[1] || a[0].localeCompare(b[0]),
+    );
+  }, [baseFiltered]);
 
-  // Track recents
-  useEffect(() => {
-    if (!selected) return;
-    const key = (selected.source ?? "") + "::" + selected.name;
-    setRecents((prev) => [key, ...prev.filter((n) => n !== key)].slice(0, 24));
-  }, [selected?.name, selected?.source]);
+  const filtered = useMemo(() => {
+    if (activeTags.length === 0) return baseFiltered;
+    return baseFiltered.filter((ic) => {
+      const tags = splitTags(ic.tags);
+      return activeTags.every((t) => tags.includes(t));
+    });
+  }, [baseFiltered, activeTags]);
 
-  const toggleFav = useCallback((key: string) => {
-    setFavorites((prev) => (prev.includes(key) ? prev.filter((n) => n !== key) : [...prev, key]));
+  const toggleTag = useCallback((tag: string) => {
+    setActiveTags((prev) =>
+      prev.includes(tag) ? prev.filter((t) => t !== tag) : [...prev, tag],
+    );
   }, []);
 
+  // === Selection ===
+  const selected = useMemo(() => {
+    if (!selectedKey) return filtered[0] ?? null;
+    const fromFiltered = filtered.find((i) => i.key === selectedKey);
+    if (fromFiltered) return fromFiltered;
+    const idx = aggregates.keyToIndex.get(selectedKey);
+    return idx != null ? icons[idx] : (filtered[0] ?? null);
+  }, [selectedKey, filtered, icons, aggregates.keyToIndex]);
+
+  // Track recents when selection changes
+  useEffect(() => {
+    if (!selected) return;
+    const key = selected.key;
+    setRecents((prev) => {
+      if (prev[0] === key) return prev;
+      const next = [key, ...prev.filter((n) => n !== key)];
+      if (next.length > 24) next.length = 24;
+      return next;
+    });
+  }, [selected]);
+
+  const toggleFav = useCallback((key: string) => {
+    setFavorites((prev) =>
+      prev.includes(key) ? prev.filter((n) => n !== key) : [...prev, key],
+    );
+  }, []);
+
+  // === Import ===
   const handleImport = useCallback(
-    (text: string, fileName?: string) => {
+    (
+      text: string,
+      fileName?: string,
+      opts?: { takenNames?: Set<string>; silent?: boolean },
+    ): { sourceName: string; imported: number; skipped: number } | null => {
       try {
         const parsed = JSON.parse(text) as ImportFile | unknown[];
         const list: unknown[] = Array.isArray(parsed)
@@ -269,98 +371,170 @@ export function App() {
         if (!list.length) throw new Error("No icons array found");
 
         let sourceName = fileName ? fileName.replace(/\.json$/i, "") : "Imported";
-        // ensure unique source name
-        if (sources[sourceName]) {
+        const taken = opts?.takenNames;
+        const isTaken = (n: string) => Boolean(sources[n]) || (taken?.has(n) ?? false);
+        if (isTaken(sourceName)) {
           let n = 2;
-          while (sources[sourceName + " (" + n + ")"]) n++;
+          while (isTaken(sourceName + " (" + n + ")")) n++;
           sourceName = sourceName + " (" + n + ")";
         }
+        taken?.add(sourceName);
         const ns = (id: string | number | null | undefined): string | null =>
           id == null ? null : sourceName + ":" + id;
 
-        const seen = new Set<string>();
-        const merged = [...icons];
-        let added = 0;
+        const seenNames = new Set<string>();
+        const newIcons: IconRecord[] = [];
         let skipped = 0;
-        list.forEach((it) => {
-          const norm = normalizeIcon(it, sourceName);
+        for (const raw of list) {
+          const norm = normalizeImportedIcon(raw, sourceName);
           if (!norm) {
             skipped++;
-            return;
+            continue;
           }
-          if (seen.has(norm.name)) {
+          if (seenNames.has(norm.name)) {
             skipped++;
-            return;
+            continue;
           }
-          seen.add(norm.name);
+          seenNames.add(norm.name);
           norm.set_id = ns(norm.set_id);
-          merged.push(norm);
-          added++;
-        });
+          // Recompute key now that set_id changed (key depends on name+source, not set, so unchanged — kept for safety)
+          norm.key = iconKey(norm);
+          newIcons.push(norm);
+        }
 
         const libraryGroupId = sourceName + ":__lib";
-        const newGroups: GroupsMetaMap = { ...groupsMeta };
-        newGroups[libraryGroupId] = {
+        const libraryGroup: GroupMeta = {
           id: libraryGroupId,
           label: sourceName,
           group_id: null,
         };
+        const newGroups: GroupMeta[] = [libraryGroup];
+        const newSets: SetMeta[] = [];
 
-        const newSets: SetsMetaMap = { ...setsMeta };
         const fileObj = !Array.isArray(parsed) ? (parsed as ImportFile) : null;
         if (fileObj?.sets && Array.isArray(fileObj.sets)) {
-          fileObj.sets.forEach((s) => {
+          for (const s of fileObj.sets) {
             if (s && s.id != null) {
               const nid = ns(s.id);
-              if (nid == null) return;
+              if (nid == null) continue;
               const parent = s.group_id != null ? ns(s.group_id) : libraryGroupId;
-              newSets[String(nid)] = {
+              newSets.push({
                 id: nid,
                 label: s.label ?? "Set " + s.id,
                 group_id: parent,
-              };
+              });
             }
-          });
+          }
         }
         if (fileObj?.groups && Array.isArray(fileObj.groups)) {
-          fileObj.groups.forEach((g) => {
+          for (const g of fileObj.groups) {
             if (g && g.id != null) {
               const nid = ns(g.id);
-              if (nid == null) return;
+              if (nid == null) continue;
               const parent = g.group_id != null ? ns(g.group_id) : libraryGroupId;
-              newGroups[String(nid)] = {
+              newGroups.push({
                 id: nid,
                 label: g.label ?? "Group " + g.id,
                 group_id: parent,
-              };
+              });
             }
-          });
+          }
         }
-        setSetsMeta(newSets);
-        setGroupsMeta(newGroups);
-        setSources((prev) => ({
-          ...prev,
-          [sourceName]: { name: sourceName, count: added },
-        }));
-        setIcons(merged);
-        showToast(
-          `Imported ${added} icons as "${sourceName}"` + (skipped ? ` · ${skipped} skipped` : ""),
-        );
+
+        const sourceMeta: SourceMeta = { name: sourceName, count: newIcons.length };
+
+        // Update React state (functional updates avoid stale closures during the async DB writes below).
+        setIcons((prev) => prev.concat(newIcons));
+        setSetsMeta((prev) => {
+          const next = { ...prev };
+          for (const s of newSets) next[String(s.id)] = s;
+          return next;
+        });
+        setGroupsMeta((prev) => {
+          const next = { ...prev };
+          for (const g of newGroups) next[String(g.id)] = g;
+          return next;
+        });
+        setSources((prev) => ({ ...prev, [sourceName]: sourceMeta }));
+
+        // Persist deltas to IDB (fire-and-forget; React state already updated for instant UX).
+        const db = dbRef.current;
+        if (db) {
+          void Promise.all([
+            bulkPutIcons(db, newIcons),
+            bulkPutSets(db, newSets),
+            bulkPutGroups(db, newGroups),
+            putSource(db, sourceMeta),
+          ]).catch((e) => console.warn("DB persist failed", e));
+        }
+
+        if (!opts?.silent) {
+          showToast(
+            `Imported ${newIcons.length} icons as "${sourceName}"` +
+              (skipped ? ` · ${skipped} skipped` : ""),
+          );
+        }
+        return { sourceName, imported: newIcons.length, skipped };
       } catch (e) {
         console.error("Import failed:", e);
-        showToast("Invalid JSON: " + (e instanceof Error ? e.message : String(e)));
+        if (!opts?.silent) {
+          showToast("Invalid JSON: " + (e instanceof Error ? e.message : String(e)));
+        }
+        return null;
       }
     },
-    [icons, sources, setsMeta, groupsMeta, showToast],
+    [sources, showToast],
   );
 
-  const onFile = useCallback(
-    (file: File) => {
-      const r = new FileReader();
-      r.onload = () => handleImport(String(r.result), file.name);
-      r.readAsText(file);
+  const onFiles = useCallback(
+    (fileList: FileList | File[] | null | undefined) => {
+      if (!fileList) return;
+      const files = Array.from(fileList);
+      if (files.length === 0) return;
+      const single = files.length === 1;
+      void (async () => {
+        const reads = await Promise.all(
+          files.map(async (f) => {
+            try {
+              return { name: f.name, text: await f.text(), error: null as unknown };
+            } catch (e) {
+              return { name: f.name, text: null, error: e };
+            }
+          }),
+        );
+        const taken = new Set<string>();
+        let imported = 0;
+        let skipped = 0;
+        let ok = 0;
+        let failed = 0;
+        for (const r of reads) {
+          if (r.text == null) {
+            failed++;
+            console.error("Read failed:", r.name, r.error);
+            continue;
+          }
+          const result = handleImport(r.text, r.name, {
+            takenNames: taken,
+            silent: !single,
+          });
+          if (result) {
+            ok++;
+            imported += result.imported;
+            skipped += result.skipped;
+          } else {
+            failed++;
+          }
+        }
+        if (!single) {
+          showToast(
+            `Imported ${imported} icons from ${ok} file${ok === 1 ? "" : "s"}` +
+              (skipped ? ` · ${skipped} skipped` : "") +
+              (failed ? ` · ${failed} failed` : ""),
+          );
+        }
+      })();
     },
-    [handleImport],
+    [handleImport, showToast],
   );
 
   const copyText = useCallback(
@@ -371,57 +545,64 @@ export function App() {
     [showToast],
   );
 
-  // Keyboard
+  // === Keyboard navigation ===
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement | null;
       if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA")) return;
-      if (e.key === "ArrowRight") setSelectedIdx((i) => Math.min(filtered.length - 1, i + 1));
-      else if (e.key === "ArrowLeft") setSelectedIdx((i) => Math.max(0, i - 1));
-      else if (e.key === "/") {
+      if (e.key === "ArrowRight" || e.key === "ArrowLeft") {
+        const cur = selected ? filtered.findIndex((f) => f.key === selected.key) : -1;
+        const delta = e.key === "ArrowRight" ? 1 : -1;
+        const next = Math.max(0, Math.min(filtered.length - 1, (cur < 0 ? 0 : cur) + delta));
+        const nextIcon = filtered[next];
+        if (nextIcon) setSelectedKey(nextIcon.key);
+      } else if (e.key === "/") {
         e.preventDefault();
         document.querySelector<HTMLInputElement>(".search-bar input")?.focus();
       } else if (e.key === "f" && selected) {
-        toggleFav((selected.source ?? "") + "::" + selected.name);
+        toggleFav(selected.key);
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [filtered, selected, toggleFav]);
 
-  const variations = useMemo(
-    () =>
-      selected
-        ? icons.filter((i) => i.name === selected.name && i.source !== selected.source)
-        : [],
-    [icons, selected],
-  );
+  const variations = useMemo(() => {
+    if (!selected) return [];
+    const all = aggregates.byName.get(selected.name) ?? [];
+    return all.filter((i) => i.source !== selected.source);
+  }, [selected, aggregates.byName]);
 
   const selectVariation = useCallback(
     (v: IconRecord) => {
-      const idx = filtered.findIndex((f) => f.name === v.name && f.source === v.source);
-      if (idx >= 0) {
-        setSelectedIdx(idx);
-      } else {
-        setActiveNav("all");
-        setActiveSet(null);
-        setActiveGroup(null);
-        setActiveSource(null);
-        setActiveStyle(null);
-        setQuery("");
-        setTimeout(() => {
-          const idx2 = icons.findIndex((f) => f.name === v.name && f.source === v.source);
-          if (idx2 >= 0) setSelectedIdx(idx2);
-        }, 0);
+      const inFiltered = filtered.find((f) => f.name === v.name && f.source === v.source);
+      if (inFiltered) {
+        setSelectedKey(inFiltered.key);
+        return;
       }
+      // The variation isn't in the current view — drop filters and select it.
+      setActiveNav("all");
+      setActiveSet(null);
+      setActiveGroup(null);
+      setActiveStyle(null);
+      setActiveTags([]);
+      setQuery("");
+      setSelectedKey(v.key);
     },
-    [filtered, icons],
+    [filtered],
   );
 
   const fgGridColor = tweaks.theme === "dark" ? "#e6e8ec" : "#1a1d23";
+  const tileMin = TILE_MIN_BY_DENSITY[tweaks.density];
+  const isHome = activeNav === "home";
+  // Grouping renders every tile non-virtualized — too costly on the unfiltered
+  // "All icons" view. Allow it only after a library/group/set narrows things.
+  const groupingDisabled =
+    activeNav === "all" && activeSet == null && activeGroup == null;
+  const effectiveGroupBy = groupBy && !groupingDisabled;
 
   return (
-    <div className={"app" + (selected ? "" : " no-detail")}>
+    <div className={"app" + (isHome || !selected ? " no-detail" : "")}>
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">V</div>
@@ -433,8 +614,30 @@ export function App() {
             placeholder="Search by name or tag…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape" && query) {
+                e.preventDefault();
+                e.stopPropagation();
+                setQuery("");
+              }
+            }}
           />
-          <span className="kbd">/</span>
+          {query ? (
+            <button
+              type="button"
+              className="search-clear"
+              title="Clear search (Esc)"
+              aria-label="Clear search"
+              onClick={() => {
+                setQuery("");
+                document.querySelector<HTMLInputElement>(".search-bar input")?.focus();
+              }}
+            >
+              <Icon name="x" size={12} />
+            </button>
+          ) : (
+            <span className="kbd">/</span>
+          )}
         </div>
         <div className="topbar-actions">
           <button className="icon-btn" title="Settings" onClick={() => setShowSettings(true)}>
@@ -454,10 +657,10 @@ export function App() {
               id="vibe-file-input"
               type="file"
               accept=".json,application/json"
+              multiple
               hidden
               onChange={(e) => {
-                const f = e.target.files?.[0];
-                if (f) onFile(f);
+                onFiles(e.target.files);
                 e.target.value = "";
               }}
             />
@@ -474,56 +677,35 @@ export function App() {
                 ? favorites.length
                 : n.key === "recents"
                   ? recents.length
-                  : icons.length;
+                  : n.key === "home"
+                    ? Object.keys(sources).length || undefined
+                    : icons.length;
+            const isActive =
+              activeNav === n.key &&
+              (n.key === "home" ||
+                (activeSet == null && activeStyle == null && activeGroup == null));
             return (
               <div
                 key={n.key}
-                className={
-                  "side-item" +
-                  (activeNav === n.key && activeSet == null && activeStyle == null
-                    ? " active"
-                    : "")
-                }
+                className={"side-item" + (isActive ? " active" : "")}
                 onClick={() => {
                   setActiveNav(n.key);
                   setActiveSet(null);
                   setActiveStyle(null);
+                  if (n.key === "home") {
+                    setActiveGroup(null);
+                    setActiveTags([]);
+                    setQuery("");
+                  }
                 }}
               >
                 <Icon name={n.icon} size={14} />
                 <span>{n.label}</span>
-                <span className="side-count">{count}</span>
+                {count != null && <span className="side-count">{count}</span>}
               </div>
             );
           })}
         </div>
-
-        <div className="side-divider" />
-
-        {Object.keys(sources).length > 0 && (
-          <div className="side-section">
-            <div className="side-label">
-              Sources <span className="count">{Object.keys(sources).length}</span>
-            </div>
-            {Object.values(sources).map((s) => (
-              <div
-                key={s.name}
-                className={"side-item" + (activeSource === s.name ? " active" : "")}
-                onClick={() => {
-                  setActiveSource(activeSource === s.name ? null : s.name);
-                  setActiveNav("all");
-                }}
-                title={s.name}
-              >
-                <Icon name="inbox" size={14} />
-                <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-                  {s.name}
-                </span>
-                <span className="side-count">{s.count}</span>
-              </div>
-            ))}
-          </div>
-        )}
 
         <div className="side-divider" />
 
@@ -584,113 +766,149 @@ export function App() {
           onDrop={(e) => {
             e.preventDefault();
             setDragging(false);
-            const f = e.dataTransfer.files[0];
-            if (f) onFile(f);
+            onFiles(e.dataTransfer.files);
           }}
           onClick={() => document.getElementById("vibe-file-input")?.click()}
         >
           <Icon name="upload" size={16} />
           <div className="dnd-zone-title">Drop JSON here</div>
-          <div className="dnd-zone-hint">or click to browse</div>
+          <div className="dnd-zone-hint">or click to browse · multiple files OK</div>
         </div>
       </aside>
 
       <main className="main">
-        <div className="toolbar">
-          <div className="toolbar-group">
-            <button
-              className={"chip" + (activeStyle === null ? " active" : "")}
-              onClick={() => setActiveStyle(null)}
-            >
-              <span className="dot" />
-              All styles
-            </button>
-            {styles.map(([s]) => (
+        {!isHome && (
+          <div className="toolbar">
+            <div className="toolbar-group">
               <button
-                key={s}
-                className={"chip" + (activeStyle === s ? " active" : "")}
-                onClick={() => setActiveStyle(activeStyle === s ? null : s)}
+                className={"chip" + (activeStyle === null ? " active" : "")}
+                onClick={() => setActiveStyle(null)}
               >
                 <span className="dot" />
-                {s}
+                All styles
               </button>
-            ))}
-          </div>
-
-          <div className="toolbar-group">
-            {sets.slice(0, 4).map(([id]) => (
-              <button
-                key={String(id)}
-                className={"chip" + (activeSet === id ? " active" : "")}
-                onClick={() => setActiveSet(activeSet === id ? null : id)}
-                title={setLabel(id)}
-              >
-                <Icon name="folder" size={11} />
-                {setLabel(id)}
-              </button>
-            ))}
-          </div>
-
-          <div className="toolbar-spacer" />
-
-          <div className="size-segment">
-            {(["compact", "comfortable", "spacious"] as const).map((d) => (
-              <button
-                key={d}
-                className={tweaks.density === d ? "active" : ""}
-                onClick={() => setTweak("density", d)}
-              >
-                {d === "compact" ? "S" : d === "comfortable" ? "M" : "L"}
-              </button>
-            ))}
-          </div>
-
-          <div className="toolbar-info">
-            <b>{filtered.length}</b> / {icons.length} icons
-          </div>
-        </div>
-
-        <div className="grid-wrap">
-          {filtered.length === 0 ? (
-            <div className="empty-state">
-              <Icon name="inbox" size={40} />
-              <h3>No icons match</h3>
-              <p>Try a different search or filter, or import a JSON file with icon definitions.</p>
+              {styles.map(([s]) => (
+                <button
+                  key={s}
+                  className={"chip" + (activeStyle === s ? " active" : "")}
+                  onClick={() => setActiveStyle(activeStyle === s ? null : s)}
+                >
+                  <span className="dot" />
+                  {s}
+                </button>
+              ))}
             </div>
-          ) : (
-            <div className="grid">
-              {filtered.map((ic, i) => {
-                const isSel =
-                  selected != null && selected.name === ic.name && selected.source === ic.source;
-                const favKey = (ic.source ?? "") + "::" + ic.name;
-                return (
-                  <div
-                    key={favKey + "::" + i}
-                    className={
-                      "tile" +
-                      (isSel ? " selected" : "") +
-                      (favorites.includes(favKey) ? " is-fav" : "") +
-                      (tweaks.showLabels ? " show-label" : "")
-                    }
-                    onClick={() => setSelectedIdx(i)}
-                    onDoubleClick={() => toggleFav(favKey)}
-                    title={ic.name + (ic.source ? " · " + ic.source : "")}
+
+            {tagAggregate.length > 0 && (
+              <div className="toolbar-group toolbar-tags">
+                {tagAggregate.slice(0, 12).map(([tag, count]) => (
+                  <button
+                    key={tag}
+                    className={"chip chip-tag" + (activeTags.includes(tag) ? " active" : "")}
+                    onClick={() => toggleTag(tag)}
+                    title={`${tag} · ${count}`}
                   >
-                    <RenderedIcon icon={ic} size={null} color={fgGridColor} />
-                    <span className="tile-fav">
-                      <Icon name="star" size={11} />
-                    </span>
-                    <span className="tile-label">{ic.name}</span>
-                    {ic.source && <span className="tile-source">{ic.source}</span>}
-                  </div>
-                );
-              })}
+                    <span className="chip-hash">#</span>
+                    {tag}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            <div className="toolbar-spacer" />
+
+            <button
+              type="button"
+              className={"group-toggle" + (effectiveGroupBy ? " active" : "")}
+              onClick={() => setGroupBy((v) => !v)}
+              disabled={groupingDisabled}
+              title={
+                groupingDisabled
+                  ? "Pick a library, group or set first — grouping all icons would be too heavy"
+                  : effectiveGroupBy
+                    ? "Show as a flat grid"
+                    : "Group icons by set"
+              }
+            >
+              <Icon name="rows" size={13} />
+              Group
+            </button>
+
+            <div className="size-segment">
+              {(["compact", "comfortable", "spacious"] as const).map((d) => (
+                <button
+                  key={d}
+                  className={tweaks.density === d ? "active" : ""}
+                  onClick={() => setTweak("density", d)}
+                >
+                  {d === "compact" ? "S" : d === "comfortable" ? "M" : "L"}
+                </button>
+              ))}
             </div>
-          )}
-        </div>
+
+            <div className="toolbar-info">
+              <b>{filtered.length}</b> / {icons.length} icons
+            </div>
+          </div>
+        )}
+
+        {isHome ? (
+          <HomeView
+            icons={icons}
+            sources={sources}
+            fgColor={fgGridColor}
+            onPickIcon={(key) => {
+              setActiveNav("all");
+              setSelectedKey(key);
+            }}
+            onPickSource={(source) => {
+              setActiveNav("all");
+              setActiveSet(null);
+              setActiveStyle(null);
+              setActiveTags([]);
+              setQuery("");
+              setActiveGroup(source ? source + ":__lib" : null);
+            }}
+            onPickStyle={(style) => {
+              setActiveNav("all");
+              setActiveSet(null);
+              setActiveGroup(null);
+              setActiveTags([]);
+              setQuery("");
+              setActiveStyle(style);
+            }}
+          />
+        ) : effectiveGroupBy ? (
+          <GroupedIconGrid
+            items={filtered}
+            setsMeta={setsMeta}
+            selectedKey={selected ? selected.key : null}
+            favoriteKeys={favoritesSet}
+            showLabels={tweaks.showLabels}
+            fgColor={fgGridColor}
+            tileMin={tileMin}
+            onSelect={setSelectedKey}
+            onToggleFav={toggleFav}
+            onPickSet={(id) => {
+              setActiveSet(id);
+              setActiveGroup(null);
+            }}
+          />
+        ) : (
+          <IconGrid
+            items={filtered}
+            selectedKey={selected ? selected.key : null}
+            favoriteKeys={favoritesSet}
+            showLabels={tweaks.showLabels}
+            fgColor={fgGridColor}
+            tileMin={tileMin}
+            onSelect={setSelectedKey}
+            onToggleFav={toggleFav}
+          />
+        )}
       </main>
 
-      {selected && (
+      {!isHome && selected && (
         <DetailPanel
           selected={selected}
           variations={variations}
