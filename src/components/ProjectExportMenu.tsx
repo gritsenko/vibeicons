@@ -8,7 +8,7 @@ import type {
 } from "../types";
 import { Icon } from "./Icon";
 import { RenderedIcon } from "./RenderedIcon";
-import { colorizeContent } from "../lib/svg";
+import { colorizeContent, rasterizeSvgToPngBlob } from "../lib/svg";
 
 interface Props {
   project: Project;
@@ -67,40 +67,6 @@ function downloadBlob(name: string, blob: Blob): void {
   a.download = name;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
-}
-
-function rasterizeToBlob(
-  svg: string,
-  size: number,
-  padding: number,
-): Promise<Blob | null> {
-  return new Promise((res, rej) => {
-    const inner = Math.max(1, size - 2 * padding);
-    const img = new Image();
-    const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
-    img.onload = () => {
-      const c = document.createElement("canvas");
-      c.width = size;
-      c.height = size;
-      const ctx = c.getContext("2d");
-      if (!ctx) {
-        URL.revokeObjectURL(url);
-        res(null);
-        return;
-      }
-      ctx.clearRect(0, 0, size, size);
-      ctx.drawImage(img, padding, padding, inner, inner);
-      c.toBlob((b) => {
-        URL.revokeObjectURL(url);
-        res(b);
-      });
-    };
-    img.onerror = (e) => {
-      URL.revokeObjectURL(url);
-      rej(e);
-    };
-    img.src = url;
-  });
 }
 
 function resolvedExportName(
@@ -181,7 +147,7 @@ export function ProjectExportMenu({
     let cancelled = false;
     const run = async () => {
       try {
-        const blob = await rasterizeToBlob(
+        const blob = await rasterizeSvgToPngBlob(
           colorizeContent(previewIcon.content, color),
           pngSize,
           safePadding,
@@ -262,7 +228,7 @@ export function ProjectExportMenu({
       const used = new Map<string, number>();
       for (const i of icons) {
         const svg = colorizeContent(i.content, color);
-        const blob = await rasterizeToBlob(svg, pngSize, safePadding);
+        const blob = await rasterizeSvgToPngBlob(svg, pngSize, safePadding);
         if (blob)
           zip.file(uniqueName(used, resolvedExportName(i, iconAliases), ".png"), blob);
       }

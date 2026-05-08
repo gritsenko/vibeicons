@@ -63,25 +63,50 @@ export function downloadSVG(name: string, content: string, color: string): void 
   downloadBlob(name + ".svg", new Blob([svg], { type: "image/svg+xml" }));
 }
 
-export function downloadPNG(name: string, content: string, color: string, size = 256): void {
+/** Rasterize SVG markup to a PNG blob at exact pixel dimensions (used for previews and zip export). */
+export function rasterizeSvgToPngBlob(
+  svg: string,
+  size: number,
+  padding: number,
+): Promise<Blob | null> {
+  return new Promise((res, rej) => {
+    const inner = Math.max(1, size - 2 * padding);
+    const img = new Image();
+    const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+    img.onload = () => {
+      const c = document.createElement("canvas");
+      c.width = size;
+      c.height = size;
+      const ctx = c.getContext("2d");
+      if (!ctx) {
+        URL.revokeObjectURL(url);
+        res(null);
+        return;
+      }
+      ctx.clearRect(0, 0, size, size);
+      ctx.drawImage(img, padding, padding, inner, inner);
+      c.toBlob((b) => {
+        URL.revokeObjectURL(url);
+        res(b);
+      });
+    };
+    img.onerror = (e) => {
+      URL.revokeObjectURL(url);
+      rej(e);
+    };
+    img.src = url;
+  });
+}
+
+export function downloadPNG(
+  name: string,
+  content: string,
+  color: string,
+  size = 256,
+  padding = 0,
+): void {
   const svg = colorizeContent(content, color);
-  const blob = new Blob([svg], { type: "image/svg+xml" });
-  const url = URL.createObjectURL(blob);
-  const img = new Image();
-  img.onload = () => {
-    const c = document.createElement("canvas");
-    c.width = size;
-    c.height = size;
-    const ctx = c.getContext("2d");
-    if (!ctx) {
-      URL.revokeObjectURL(url);
-      return;
-    }
-    ctx.drawImage(img, 0, 0, size, size);
-    c.toBlob((b) => {
-      if (b) downloadBlob(name + ".png", b);
-      URL.revokeObjectURL(url);
-    });
-  };
-  img.src = url;
+  void rasterizeSvgToPngBlob(svg, size, padding).then((b) => {
+    if (b) downloadBlob(name + ".png", b);
+  });
 }
