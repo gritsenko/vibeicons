@@ -7,12 +7,16 @@ interface Props {
   items: IconRecord[];
   setsMeta: SetsMetaMap;
   selectedKey: string | null;
+  selectedKeys: Set<string>;
   favoriteKeys: Set<string>;
   showLabels: boolean;
   fgColor: string;
   tileMin: number;
-  onSelect: (key: string) => void;
-  onToggleFav: (key: string) => void;
+  onSelect: (key: string, e: React.MouseEvent) => void;
+  onActivate: (key: string) => void;
+  onContext: (key: string, x: number, y: number) => void;
+  onDragStart: (key: string, e: React.DragEvent) => void;
+  onDragEnd: () => void;
   onPickSet: (id: string | number) => void;
 }
 
@@ -29,12 +33,16 @@ export function GroupedIconGrid({
   items,
   setsMeta,
   selectedKey,
+  selectedKeys,
   favoriteKeys,
   showLabels,
   fgColor,
   tileMin,
   onSelect,
-  onToggleFav,
+  onActivate,
+  onContext,
+  onDragStart,
+  onDragEnd,
   onPickSet,
 }: Props) {
   const sections = useMemo<Section[]>(() => {
@@ -55,6 +63,9 @@ export function GroupedIconGrid({
     }
     const list = [...map.values()];
     list.sort((a, b) => a.label.localeCompare(b.label));
+    for (const sec of list) {
+      sec.items.sort((a, b) => a.name.localeCompare(b.name));
+    }
     return list;
   }, [items, setsMeta]);
 
@@ -107,11 +118,15 @@ export function GroupedIconGrid({
                 key={ic.key}
                 icon={ic}
                 isSelected={selectedKey === ic.key}
+                isMulti={selectedKeys.has(ic.key)}
                 isFav={favoriteKeys.has(ic.key)}
                 showLabel={showLabels}
                 fgColor={fgColor}
                 onSelect={onSelect}
-                onToggleFav={onToggleFav}
+                onActivate={onActivate}
+                onContext={onContext}
+                onDragStart={onDragStart}
+                onDragEnd={onDragEnd}
               />
             ))}
           </div>
@@ -124,32 +139,51 @@ export function GroupedIconGrid({
 interface TileProps {
   icon: IconRecord;
   isSelected: boolean;
+  isMulti: boolean;
   isFav: boolean;
   showLabel: boolean;
   fgColor: string;
-  onSelect: (key: string) => void;
-  onToggleFav: (key: string) => void;
+  onSelect: (key: string, e: React.MouseEvent) => void;
+  onActivate: (key: string) => void;
+  onContext: (key: string, x: number, y: number) => void;
+  onDragStart: (key: string, e: React.DragEvent) => void;
+  onDragEnd: () => void;
 }
 
 const GroupedTile = memo(function GroupedTile({
   icon,
   isSelected,
+  isMulti,
   isFav,
   showLabel,
   fgColor,
   onSelect,
-  onToggleFav,
+  onActivate,
+  onContext,
+  onDragStart,
+  onDragEnd,
 }: TileProps) {
   return (
     <div
       className={
         "tile" +
         (isSelected ? " selected" : "") +
+        (isMulti ? " multi-selected" : "") +
         (isFav ? " is-fav" : "") +
         (showLabel ? " show-label" : "")
       }
-      onClick={() => onSelect(icon.key)}
-      onDoubleClick={() => onToggleFav(icon.key)}
+      draggable
+      onClick={(e) => onSelect(icon.key, e)}
+      onDoubleClick={(e) => {
+        e.preventDefault();
+        onActivate(icon.key);
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onContext(icon.key, e.clientX, e.clientY);
+      }}
+      onDragStart={(e) => onDragStart(icon.key, e)}
+      onDragEnd={onDragEnd}
       title={icon.name + (icon.source ? " · " + icon.source : "")}
     >
       <RenderedIcon icon={icon} size={null} color={fgColor} />
@@ -158,6 +192,7 @@ const GroupedTile = memo(function GroupedTile({
       </span>
       <span className="tile-label">{icon.name}</span>
       {icon.source && <span className="tile-source">{icon.source}</span>}
+      {isMulti && <span className="tile-multi-mark">✓</span>}
     </div>
   );
 });

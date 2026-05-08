@@ -49,3 +49,21 @@ export interface ImportFile {
 export type SetsMetaMap = Record<string, SetMeta>;
 export type GroupsMetaMap = Record<string, GroupMeta>;
 export type SourcesMap = Record<string, SourceMeta>;
+
+export type PreviewBg = "checker" | "checker-dark" | "dark" | "light";
+
+export interface ProjectExportSettings {
+  color: string;
+  pngSize: number;
+  pngPadding: number;
+  previewBg: PreviewBg;
+}
+
+export interface Project {
+  id: string;
+  name: string;
+  /** Composite icon keys: "<source>::<name>". */
+  iconKeys: string[];
+  /** Export-modal preferences, remembered per project. */
+  exportSettings?: ProjectExportSettings;
+}

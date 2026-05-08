@@ -11,6 +11,8 @@ import type {
   GroupsMetaMap,
   IconRecord,
   ImportFile,
+  Project,
+  ProjectExportSettings,
   SetMeta,
   SetsMetaMap,
   SourceMeta,
@@ -39,6 +41,10 @@ import { IconGrid } from "./components/IconGrid";
 import { GroupedIconGrid } from "./components/GroupedIconGrid";
 import { HomeView } from "./components/HomeView";
 import { LibraryEmpty } from "./components/LibraryEmpty";
+import { ProjectsSection } from "./components/ProjectsSection";
+import { QuickCollectionPanel } from "./components/QuickCollectionPanel";
+import { TileContextMenu } from "./components/TileContextMenu";
+import { ProjectExportMenu } from "./components/ProjectExportMenu";
 
 declare const __APP_VERSION__: string;
 
@@ -163,6 +169,28 @@ export function App() {
   useEffect(() => writeJson(STORAGE_KEY + ".groupBy", groupBy), [groupBy]);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>({});
 
+  // === Projects / Collections ===
+  const [projects, setProjects] = useState<Project[]>(() =>
+    readJson<Project[]>(STORAGE_KEY + ".projects", []),
+  );
+  const [activeProject, setActiveProject] = useState<string | null>(null);
+  const [quickProjectId, setQuickProjectId] = useState<string | null>(() =>
+    readJson<string | null>(STORAGE_KEY + ".quickProject", null),
+  );
+  const [selectedKeys, setSelectedKeys] = useState<Set<string>>(() => new Set());
+  const [tileMenu, setTileMenu] = useState<{
+    x: number;
+    y: number;
+    keys: string[];
+  } | null>(null);
+  const [exportProjectId, setExportProjectId] = useState<string | null>(null);
+  const [dragKeys, setDragKeys] = useState<string[]>([]);
+
+  useEffect(() => writeJson(STORAGE_KEY + ".projects", projects), [projects]);
+  useEffect(() => {
+    writeJson(STORAGE_KEY + ".quickProject", quickProjectId);
+  }, [quickProjectId]);
+
   const toggleGroupExpand = useCallback((id: string | number) => {
     setExpandedGroups((prev) => ({ ...prev, [String(id)]: !prev[String(id)] }));
   }, []);
@@ -171,6 +199,90 @@ export function App() {
     setToast(msg);
     setTimeout(() => setToast(null), 1800);
   }, []);
+
+  // === Project mutators (depend on showToast) ===
+  const newProjectId = () =>
+    "p_" + Date.now().toString(36) + "_" + Math.random().toString(36).slice(2, 6);
+
+  const createProject = useCallback((name: string): string => {
+    const id = newProjectId();
+    setProjects((prev) => [...prev, { id, name, iconKeys: [] }]);
+    return id;
+  }, []);
+  const renameProject = useCallback((id: string, name: string) => {
+    setProjects((prev) => prev.map((p) => (p.id === id ? { ...p, name } : p)));
+  }, []);
+  const deleteProject = useCallback((id: string) => {
+    setProjects((prev) => prev.filter((p) => p.id !== id));
+    setActiveProject((cur) => (cur === id ? null : cur));
+    setQuickProjectId((cur) => (cur === id ? null : cur));
+    setExportProjectId((cur) => (cur === id ? null : cur));
+  }, []);
+  const addIconsToProject = useCallback(
+    (projId: string, keys: string[]) => {
+      if (!keys.length) return;
+      let projName = "project";
+      setProjects((prev) =>
+        prev.map((p) => {
+          if (p.id !== projId) return p;
+          projName = p.name;
+          const seen = new Set(p.iconKeys);
+          const next = [...p.iconKeys];
+          for (const k of keys) {
+            if (!seen.has(k)) {
+              seen.add(k);
+              next.push(k);
+            }
+          }
+          return { ...p, iconKeys: next };
+        }),
+      );
+      showToast(
+        `Added ${keys.length} icon${keys.length === 1 ? "" : "s"} to "${projName}"`,
+      );
+    },
+    [showToast],
+  );
+  const removeIconsFromProject = useCallback((projId: string, keys: string[]) => {
+    if (!keys.length) return;
+    const ks = new Set(keys);
+    setProjects((prev) =>
+      prev.map((p) =>
+        p.id === projId ? { ...p, iconKeys: p.iconKeys.filter((k) => !ks.has(k)) } : p,
+      ),
+    );
+  }, []);
+  const clearProject = useCallback((projId: string) => {
+    setProjects((prev) =>
+      prev.map((p) => (p.id === projId ? { ...p, iconKeys: [] } : p)),
+    );
+  }, []);
+  const createAndAddToProject = useCallback((name: string, keys: string[]) => {
+    const id = newProjectId();
+    setProjects((prev) => [
+      ...prev,
+      { id, name, iconKeys: [...new Set(keys)] },
+    ]);
+  }, []);
+  const updateProjectExportSettings = useCallback(
+    (id: string, patch: Partial<ProjectExportSettings>) => {
+      setProjects((prev) =>
+        prev.map((p) => {
+          if (p.id !== id) return p;
+          const cur = p.exportSettings;
+          const next: ProjectExportSettings = {
+            color: cur?.color ?? "#1A1D23",
+            pngSize: cur?.pngSize ?? 256,
+            pngPadding: cur?.pngPadding ?? 0,
+            previewBg: cur?.previewBg ?? "checker",
+            ...patch,
+          };
+          return { ...p, exportSettings: next };
+        }),
+      );
+    },
+    [],
+  );
 
   // clearAll is defined further down so it can call loadBundledLibraries
   // (which depends on handleImport defined later in this component).
@@ -263,6 +375,17 @@ export function App() {
     return null;
   }, [activeNav, favoritesSet, recentsSet]);
 
+  // When a project is active, replace nav-based filtering (favorites/recents)
+  // with project membership. activeStyle / activeSet / activeGroup still apply
+  // so the user can narrow within a project.
+  const projectKeySet = useMemo<Set<string> | null>(() => {
+    if (activeProject == null) return null;
+    const proj = projects.find((p) => p.id === activeProject);
+    return new Set(proj ? proj.iconKeys : []);
+  }, [activeProject, projects]);
+
+  const effectiveFilterSet = projectKeySet ?? navFilterSet;
+
   // baseFiltered: all filters except tag chips. Tag aggregation is computed
   // from this so toggling a tag doesn't make the other tags disappear.
   const baseFiltered = useMemo(() => {
@@ -270,7 +393,7 @@ export function App() {
     const out: IconRecord[] = [];
     for (let i = 0; i < icons.length; i++) {
       const ic = icons[i];
-      if (navFilterSet && !navFilterSet.has(ic.key)) continue;
+      if (effectiveFilterSet && !effectiveFilterSet.has(ic.key)) continue;
       if (activeSet != null && ic.set_id !== activeSet) continue;
       if (allowedSetIds && (ic.set_id == null || !allowedSetIds.has(ic.set_id))) continue;
       if (activeStyle != null && ic.style !== activeStyle) continue;
@@ -284,7 +407,7 @@ export function App() {
     activeSet,
     activeStyle,
     allowedSetIds,
-    navFilterSet,
+    effectiveFilterSet,
   ]);
 
   const splitTags = (s: string): string[] =>
@@ -530,6 +653,12 @@ export function App() {
     setActiveNav("all");
     setSelectedKey(null);
     setExpandedGroups({});
+    setProjects([]);
+    setActiveProject(null);
+    setQuickProjectId(null);
+    setSelectedKeys(new Set());
+    setExportProjectId(null);
+    setTileMenu(null);
     clearAllStorage();
     if (dbRef.current) void clearAllDb(dbRef.current);
     setShowSettings(false);
@@ -595,6 +724,70 @@ export function App() {
     [showToast],
   );
 
+  // === Tile interaction handlers ===
+  const onTileSelect = useCallback(
+    (key: string, e: React.MouseEvent) => {
+      if (e.shiftKey || e.metaKey || e.ctrlKey) {
+        setSelectedKeys((prev) => {
+          const next = new Set(prev);
+          if (next.has(key)) next.delete(key);
+          else next.add(key);
+          return next;
+        });
+      } else {
+        setSelectedKey(key);
+        setSelectedKeys(new Set());
+      }
+    },
+    [],
+  );
+  const onTileActivate = useCallback(
+    (key: string) => {
+      if (quickProjectId) {
+        addIconsToProject(quickProjectId, [key]);
+      } else {
+        toggleFav(key);
+      }
+    },
+    [quickProjectId, addIconsToProject, toggleFav],
+  );
+  const onTileContext = useCallback(
+    (key: string, x: number, y: number) => {
+      // If RMB target isn't part of the multi-select, fall back to a single-icon menu.
+      const keys = selectedKeys.has(key) ? [...selectedKeys] : [key];
+      if (!selectedKeys.has(key)) setSelectedKey(key);
+      setTileMenu({ x, y, keys });
+    },
+    [selectedKeys],
+  );
+  const onTileDragStart = useCallback(
+    (key: string, e: React.DragEvent) => {
+      const keys =
+        selectedKeys.has(key) && selectedKeys.size > 1
+          ? [...selectedKeys]
+          : [key];
+      setDragKeys(keys);
+      e.dataTransfer.effectAllowed = "copy";
+      try {
+        e.dataTransfer.setData("text/plain", keys.join("\n"));
+      } catch {
+        /* ignore */
+      }
+    },
+    [selectedKeys],
+  );
+  const onTileDragEnd = useCallback(() => {
+    setDragKeys([]);
+  }, []);
+
+  const openBulkMenu = useCallback(
+    (e: React.MouseEvent) => {
+      if (selectedKeys.size === 0) return;
+      setTileMenu({ x: e.clientX, y: e.clientY, keys: [...selectedKeys] });
+    },
+    [selectedKeys],
+  );
+
   // === Keyboard navigation ===
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -611,11 +804,21 @@ export function App() {
         document.querySelector<HTMLInputElement>(".search-bar input")?.focus();
       } else if (e.key === "f" && selected) {
         toggleFav(selected.key);
+      } else if (e.key === "Escape") {
+        if (selectedKeys.size > 0) setSelectedKeys(new Set());
+        if (tileMenu) setTileMenu(null);
+      } else if (
+        (e.metaKey || e.ctrlKey) &&
+        (e.key === "a" || e.key === "A") &&
+        filtered.length > 0
+      ) {
+        e.preventDefault();
+        setSelectedKeys(new Set(filtered.map((ic) => ic.key)));
       }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [filtered, selected, toggleFav]);
+  }, [filtered, selected, toggleFav, selectedKeys, tileMenu]);
 
   const variations = useMemo(() => {
     if (!selected) return [];
@@ -653,7 +856,12 @@ export function App() {
   const effectiveGroupBy = groupBy && !groupingDisabled;
 
   return (
-    <div className={"app" + (isHome || !selected ? " no-detail" : "")}>
+    <div
+      className={
+        "app" +
+        (isHome || (!selected && projects.length === 0) ? " no-detail" : "")
+      }
+    >
       <header className="topbar">
         <div className="brand">
           <div className="brand-mark">V</div>
@@ -744,6 +952,7 @@ export function App() {
                   setActiveNav(n.key);
                   setActiveSet(null);
                   setActiveStyle(null);
+                  setActiveProject(null);
                   if (n.key === "home") {
                     setActiveGroup(null);
                     setActiveTags([]);
@@ -758,6 +967,27 @@ export function App() {
             );
           })}
         </div>
+
+        <div className="side-divider" />
+
+        <ProjectsSection
+          projects={projects}
+          activeProject={activeProject}
+          quickProjectId={quickProjectId}
+          dragKeys={dragKeys}
+          onSelectProject={(id) => {
+            setActiveProject((cur) => (cur === id ? null : id));
+            setSelectedKeys(new Set());
+          }}
+          onCreateProject={(name) => {
+            createProject(name);
+          }}
+          onRenameProject={renameProject}
+          onDeleteProject={deleteProject}
+          onSetQuick={(id) => setQuickProjectId(id)}
+          onExportProject={(id) => setExportProjectId(id)}
+          onDropOnProject={(id, keys) => addIconsToProject(id, keys)}
+        />
 
         <div className="side-divider" />
 
@@ -811,11 +1041,15 @@ export function App() {
         <div
           className={"dnd-zone" + (dragging ? " dragging" : "")}
           onDragOver={(e) => {
+            // Only highlight for actual file drags so internal tile drags
+            // (text/plain) don't make this zone flash.
+            if (!e.dataTransfer.types.includes("Files")) return;
             e.preventDefault();
             setDragging(true);
           }}
           onDragLeave={() => setDragging(false)}
           onDrop={(e) => {
+            if (!e.dataTransfer.types.includes("Files")) return;
             e.preventDefault();
             setDragging(false);
             onFiles(e.dataTransfer.files);
@@ -904,6 +1138,56 @@ export function App() {
           </div>
         )}
 
+        {!isHome && !isEmpty && activeProject != null && (() => {
+          const proj = projects.find((p) => p.id === activeProject);
+          if (!proj) return null;
+          return (
+            <div className="proj-banner">
+              <Icon name="folder" size={12} />
+              <span className="proj-banner-name">{proj.name}</span>
+              <span className="proj-banner-count">{proj.iconKeys.length} icons</span>
+              <button
+                type="button"
+                className="btn btn-ghost proj-banner-btn"
+                onClick={() => setExportProjectId(proj.id)}
+                title="Export"
+              >
+                <Icon name="download" size={11} /> Export
+              </button>
+              <button
+                type="button"
+                className="btn btn-ghost proj-banner-btn"
+                onClick={() => setActiveProject(null)}
+                title="Close project view"
+              >
+                <Icon name="x" size={11} />
+              </button>
+            </div>
+          );
+        })()}
+
+        {!isHome && selectedKeys.size > 0 && (
+          <div className="bulk-bar">
+            <span>
+              <b>{selectedKeys.size}</b> selected
+            </span>
+            <button
+              type="button"
+              className="btn btn-ghost proj-banner-btn"
+              onClick={openBulkMenu}
+            >
+              Add to project…
+            </button>
+            <button
+              type="button"
+              className="btn btn-ghost proj-banner-btn"
+              onClick={() => setSelectedKeys(new Set())}
+            >
+              Clear
+            </button>
+          </div>
+        )}
+
         {isEmpty ? (
           <LibraryEmpty
             loading={bundledLoading}
@@ -941,12 +1225,16 @@ export function App() {
             items={filtered}
             setsMeta={setsMeta}
             selectedKey={selected ? selected.key : null}
+            selectedKeys={selectedKeys}
             favoriteKeys={favoritesSet}
             showLabels={tweaks.showLabels}
             fgColor={fgGridColor}
             tileMin={tileMin}
-            onSelect={setSelectedKey}
-            onToggleFav={toggleFav}
+            onSelect={onTileSelect}
+            onActivate={onTileActivate}
+            onContext={onTileContext}
+            onDragStart={onTileDragStart}
+            onDragEnd={onTileDragEnd}
             onPickSet={(id) => {
               setActiveSet(id);
               setActiveGroup(null);
@@ -956,30 +1244,74 @@ export function App() {
           <IconGrid
             items={filtered}
             selectedKey={selected ? selected.key : null}
+            selectedKeys={selectedKeys}
             favoriteKeys={favoritesSet}
             showLabels={tweaks.showLabels}
             fgColor={fgGridColor}
             tileMin={tileMin}
-            onSelect={setSelectedKey}
-            onToggleFav={toggleFav}
+            onSelect={onTileSelect}
+            onActivate={onTileActivate}
+            onContext={onTileContext}
+            onDragStart={onTileDragStart}
+            onDragEnd={onTileDragEnd}
           />
         )}
       </main>
 
-      {!isHome && selected && (
-        <DetailPanel
-          selected={selected}
-          variations={variations}
-          tweaks={tweaks}
-          color={color}
-          setColor={setColor}
-          setLabel={setLabel}
-          toggleFav={toggleFav}
-          setQuery={setQuery}
-          selectVariation={selectVariation}
-          copyText={copyText}
-        />
-      )}
+      {!isHome && (selected || projects.length > 0) && (() => {
+        const quickProj = projects.find((p) => p.id === quickProjectId) ?? null;
+        const quickIcons = quickProj
+          ? quickProj.iconKeys
+              .map((k) => {
+                const idx = aggregates.keyToIndex.get(k);
+                return idx != null ? icons[idx] : null;
+              })
+              .filter((x): x is IconRecord => x !== null)
+          : [];
+        return (
+          <aside className={"detail" + (selected ? "" : " detail-quick-only")}>
+            {projects.length > 0 && (
+              <QuickCollectionPanel
+                project={quickProj}
+                icons={quickIcons}
+                projects={projects}
+                theme={tweaks.theme}
+                onRemove={(k) => {
+                  if (quickProj) removeIconsFromProject(quickProj.id, [k]);
+                }}
+                onClear={(id) => {
+                  if (confirm("Clear this project?")) clearProject(id);
+                }}
+                onExport={(id) => setExportProjectId(id)}
+                onSetQuick={(id) => setQuickProjectId(id)}
+                onOpenProject={(id) => {
+                  setActiveProject(id);
+                  setActiveSet(null);
+                  setActiveGroup(null);
+                  setActiveStyle(null);
+                  setActiveTags([]);
+                  setActiveNav("all");
+                  setSelectedKeys(new Set());
+                }}
+              />
+            )}
+            {selected && (
+              <DetailPanel
+                selected={selected}
+                variations={variations}
+                tweaks={tweaks}
+                color={color}
+                setColor={setColor}
+                setLabel={setLabel}
+                toggleFav={toggleFav}
+                setQuery={setQuery}
+                selectVariation={selectVariation}
+                copyText={copyText}
+              />
+            )}
+          </aside>
+        );
+      })()}
 
       <div className="statusbar">
         <span className="dot-ok" /> Ready
@@ -1012,6 +1344,47 @@ export function App() {
           onLoadBundled={() => void loadBundledLibraries()}
         />
       )}
+
+      {tileMenu && (
+        <TileContextMenu
+          x={tileMenu.x}
+          y={tileMenu.y}
+          count={tileMenu.keys.length}
+          projects={projects}
+          quickProjectId={quickProjectId}
+          isInProject={activeProject != null}
+          onAddTo={(pid) => addIconsToProject(pid, tileMenu.keys)}
+          onCreateAndAdd={(name) => createAndAddToProject(name, tileMenu.keys)}
+          onRemoveFrom={() => {
+            if (activeProject) removeIconsFromProject(activeProject, tileMenu.keys);
+          }}
+          onSetQuick={(id) => setQuickProjectId(id)}
+          onClose={() => setTileMenu(null)}
+        />
+      )}
+
+      {exportProjectId && (() => {
+        const proj = projects.find((p) => p.id === exportProjectId);
+        if (!proj) return null;
+        const projIcons = proj.iconKeys
+          .map((k) => {
+            const idx = aggregates.keyToIndex.get(k);
+            return idx != null ? icons[idx] : null;
+          })
+          .filter((x): x is IconRecord => x !== null);
+        return (
+          <ProjectExportMenu
+            project={proj}
+            icons={projIcons}
+            settings={proj.exportSettings}
+            onSettingsChange={(patch) =>
+              updateProjectExportSettings(proj.id, patch)
+            }
+            showToast={showToast}
+            onClose={() => setExportProjectId(null)}
+          />
+        );
+      })()}
     </div>
   );
 }

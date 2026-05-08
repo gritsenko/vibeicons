@@ -43,7 +43,7 @@ export function DetailPanel({
   const fgColor = tweaks.theme === "dark" ? "#e6e8ec" : "#1a1d23";
 
   return (
-    <aside className="detail">
+    <>
       <div className="detail-header">
         <div style={{ minWidth: 0 }}>
           <div className="detail-name">{selected.name}</div>
@@ -190,6 +190,6 @@ export function DetailPanel({
           <Icon name="download" size={13} /> PNG
         </button>
       </div>
-    </aside>
+    </>
   );
 }

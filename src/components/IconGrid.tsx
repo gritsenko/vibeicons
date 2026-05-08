@@ -6,12 +6,16 @@ import { RenderedIcon } from "./RenderedIcon";
 interface Props {
   items: IconRecord[];
   selectedKey: string | null;
+  selectedKeys: Set<string>;
   favoriteKeys: Set<string>;
   showLabels: boolean;
   fgColor: string;
   tileMin: number;
-  onSelect: (key: string) => void;
-  onToggleFav: (key: string) => void;
+  onSelect: (key: string, e: React.MouseEvent) => void;
+  onActivate: (key: string) => void;
+  onContext: (key: string, x: number, y: number) => void;
+  onDragStart: (key: string, e: React.DragEvent) => void;
+  onDragEnd: () => void;
 }
 
 const GAP = 6;
@@ -20,17 +24,17 @@ const ROW_BUFFER = 4;
 export function IconGrid({
   items,
   selectedKey,
+  selectedKeys,
   favoriteKeys,
   showLabels,
   fgColor,
   tileMin,
   onSelect,
-  onToggleFav,
+  onActivate,
+  onContext,
+  onDragStart,
+  onDragEnd,
 }: Props) {
-  // Callback refs: when items goes 0 → N, the empty-state branch unmounts and
-  // the virt containers mount. State-backed refs let useLayoutEffect re-run as
-  // soon as both elements attach, otherwise the very first render captures
-  // null refs, leaves width=0 and cols=1, and we get a single vertical column.
   const [scrollEl, setScrollEl] = useState<HTMLDivElement | null>(null);
   const [canvasEl, setCanvasEl] = useState<HTMLDivElement | null>(null);
   const setScrollRef = useCallback((el: HTMLDivElement | null) => setScrollEl(el), []);
@@ -67,7 +71,6 @@ export function IconGrid({
     Math.ceil((scrollTop + viewportH) / rowHeight) + ROW_BUFFER,
   );
 
-  // When the filtered list reference changes (e.g. new search/filter), reset to top.
   const lastItemsRef = useRef(items);
   useEffect(() => {
     if (lastItemsRef.current !== items) {
@@ -79,8 +82,6 @@ export function IconGrid({
     }
   }, [items, scrollEl]);
 
-  // Keep the selected tile in view when navigated by keyboard (selectedKey
-  // changes from outside the grid).
   useEffect(() => {
     if (!selectedKey || items.length === 0 || cols === 0 || !scrollEl) return;
     const idx = items.findIndex((i) => i.key === selectedKey);
@@ -111,11 +112,15 @@ export function IconGrid({
             left={c * (tileSize + GAP)}
             size={tileSize}
             isSelected={selectedKey === ic.key}
+            isMulti={selectedKeys.has(ic.key)}
             isFav={favoriteKeys.has(ic.key)}
             showLabel={showLabels}
             fgColor={fgColor}
             onSelect={onSelect}
-            onToggleFav={onToggleFav}
+            onActivate={onActivate}
+            onContext={onContext}
+            onDragStart={onDragStart}
+            onDragEnd={onDragEnd}
           />,
         );
       }
@@ -129,11 +134,15 @@ export function IconGrid({
     startRow,
     endRow,
     selectedKey,
+    selectedKeys,
     favoriteKeys,
     showLabels,
     fgColor,
     onSelect,
-    onToggleFav,
+    onActivate,
+    onContext,
+    onDragStart,
+    onDragEnd,
   ]);
 
   if (items.length === 0) {
@@ -167,11 +176,15 @@ interface TileProps {
   left: number;
   size: number;
   isSelected: boolean;
+  isMulti: boolean;
   isFav: boolean;
   showLabel: boolean;
   fgColor: string;
-  onSelect: (key: string) => void;
-  onToggleFav: (key: string) => void;
+  onSelect: (key: string, e: React.MouseEvent) => void;
+  onActivate: (key: string) => void;
+  onContext: (key: string, x: number, y: number) => void;
+  onDragStart: (key: string, e: React.DragEvent) => void;
+  onDragEnd: () => void;
 }
 
 const Tile = memo(function Tile({
@@ -180,17 +193,22 @@ const Tile = memo(function Tile({
   left,
   size,
   isSelected,
+  isMulti,
   isFav,
   showLabel,
   fgColor,
   onSelect,
-  onToggleFav,
+  onActivate,
+  onContext,
+  onDragStart,
+  onDragEnd,
 }: TileProps) {
   return (
     <div
       className={
         "tile" +
         (isSelected ? " selected" : "") +
+        (isMulti ? " multi-selected" : "") +
         (isFav ? " is-fav" : "") +
         (showLabel ? " show-label" : "")
       }
@@ -201,8 +219,18 @@ const Tile = memo(function Tile({
         width: size,
         height: size,
       }}
-      onClick={() => onSelect(icon.key)}
-      onDoubleClick={() => onToggleFav(icon.key)}
+      draggable
+      onClick={(e) => onSelect(icon.key, e)}
+      onDoubleClick={(e) => {
+        e.preventDefault();
+        onActivate(icon.key);
+      }}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        onContext(icon.key, e.clientX, e.clientY);
+      }}
+      onDragStart={(e) => onDragStart(icon.key, e)}
+      onDragEnd={onDragEnd}
       title={icon.name + (icon.source ? " · " + icon.source : "")}
     >
       <RenderedIcon icon={icon} size={null} color={fgColor} />
@@ -211,6 +239,7 @@ const Tile = memo(function Tile({
       </span>
       <span className="tile-label">{icon.name}</span>
       {icon.source && <span className="tile-source">{icon.source}</span>}
+      {isMulti && <span className="tile-multi-mark">✓</span>}
     </div>
   );
 });
