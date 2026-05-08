@@ -25,14 +25,16 @@ import {
   bulkPutIcons,
   bulkPutSets,
   clearAll as clearAllDb,
+  deleteLibraryFromDb,
   getAllGroups,
   getAllIcons,
   getAllSets,
   getAllSources,
   openDb,
   putSource,
+  renameLibraryInDb,
 } from "./lib/db";
-import { iconKey, normalizeImportedIcon } from "./lib/icons";
+import { buildSearch, iconKey, normalizeImportedIcon } from "./lib/icons";
 import { Icon } from "./components/Icon";
 import { HierarchyTree } from "./components/HierarchyTree";
 import { DetailPanel } from "./components/DetailPanel";
@@ -184,6 +186,7 @@ export function App() {
     keys: string[];
   } | null>(null);
   const [exportProjectId, setExportProjectId] = useState<string | null>(null);
+  const [exportLibrarySource, setExportLibrarySource] = useState<string | null>(null);
   const [dragKeys, setDragKeys] = useState<string[]>([]);
 
   useEffect(() => writeJson(STORAGE_KEY + ".projects", projects), [projects]);
@@ -315,6 +318,224 @@ export function App() {
       );
     },
     [],
+  );
+
+  const remapIconCompositeKey = useCallback((key: string, oldSrc: string, newSrc: string) => {
+    const p = oldSrc + "::";
+    return key.startsWith(p) ? newSrc + "::" + key.slice(p.length) : key;
+  }, []);
+
+  const renameLibrary = useCallback(
+    (oldName: string, newName: string): boolean => {
+      const trimmed = newName.trim();
+      if (!trimmed || trimmed === oldName) return false;
+      if (sources[trimmed]) {
+        showToast(`A library named "${trimmed}" already exists`);
+        return false;
+      }
+      if (!sources[oldName]) return false;
+
+      const rk = (key: string) => remapIconCompositeKey(key, oldName, trimmed);
+      const rid = (id: string | number | null): string | number | null => {
+        if (id == null) return null;
+        const s = String(id);
+        return s.startsWith(oldName + ":") ? trimmed + ":" + s.slice(oldName.length + 1) : id;
+      };
+
+      const scopedPrefix = oldName + ":";
+      const meta = sources[oldName];
+      setIcons((prev) =>
+        prev.map((ic) =>
+          ic.source !== oldName
+            ? ic
+            : {
+                ...ic,
+                source: trimmed,
+                key: rk(ic.key),
+                search: buildSearch(ic.name, ic.tags, trimmed),
+                set_id: rid(ic.set_id) as string | number | null,
+              },
+        ),
+      );
+
+      setSetsMeta((prev) => {
+        const next: SetsMetaMap = {};
+        for (const v of Object.values(prev)) {
+          if (!String(v.id).startsWith(scopedPrefix)) next[String(v.id)] = v;
+          else {
+            const nv = {
+              ...v,
+              id: rid(v.id)!,
+              group_id: rid(v.group_id),
+              label: v.label === oldName ? trimmed : v.label,
+            };
+            next[String(nv.id)] = nv;
+          }
+        }
+        return next;
+      });
+
+      setGroupsMeta((prev) => {
+        const next: GroupsMetaMap = {};
+        for (const v of Object.values(prev)) {
+          if (!String(v.id).startsWith(scopedPrefix)) next[String(v.id)] = v;
+          else {
+            const nv = {
+              ...v,
+              id: rid(v.id)!,
+              group_id: rid(v.group_id),
+              label: v.label === oldName ? trimmed : v.label,
+            };
+            next[String(nv.id)] = nv;
+          }
+        }
+        return next;
+      });
+
+      setSources((prev) => {
+        const next = { ...prev };
+        delete next[oldName];
+        next[trimmed] = { name: trimmed, count: meta.count };
+        return next;
+      });
+
+      setFavorites((prev) => prev.map(rk));
+      setRecents((prev) => prev.map(rk));
+
+      setProjects((prev) =>
+        prev.map((p) => {
+          const nextAliases = p.iconAliases
+            ? Object.fromEntries(Object.entries(p.iconAliases).map(([k, v]) => [rk(k), v]))
+            : undefined;
+          return {
+            ...p,
+            iconKeys: p.iconKeys.map(rk),
+            iconAliases:
+              nextAliases && Object.keys(nextAliases).length > 0 ? nextAliases : undefined,
+          };
+        }),
+      );
+
+      setExpandedGroups((prev) => {
+        const next: Record<string, boolean> = {};
+        for (const [k, v] of Object.entries(prev)) {
+          const nk = k.startsWith(scopedPrefix) ? trimmed + ":" + k.slice(oldName.length + 1) : k;
+          next[nk] = v;
+        }
+        return next;
+      });
+
+      setActiveGroup((cur) =>
+        cur != null && String(cur).startsWith(scopedPrefix) ? rid(cur)! : cur,
+      );
+      setActiveSet((cur) =>
+        cur != null && String(cur).startsWith(scopedPrefix) ? rid(cur)! : cur,
+      );
+
+      const prefixKey = oldName + "::";
+      setSelectedKey((cur) => (cur && cur.startsWith(prefixKey) ? rk(cur) : cur));
+      setSelectedKeys((prev) => new Set([...prev].map(rk)));
+
+      const db = dbRef.current;
+      if (db) {
+        void renameLibraryInDb(db, oldName, trimmed).catch((e) =>
+          console.warn("Rename library DB sync failed", e),
+        );
+      }
+
+      showToast(`Library renamed to "${trimmed}"`);
+      setExportLibrarySource((cur) => (cur === oldName ? trimmed : cur));
+      return true;
+    },
+    [sources, showToast, remapIconCompositeKey],
+  );
+
+  const deleteLibrary = useCallback(
+    (sourceName: string) => {
+      if (!sources[sourceName]) return;
+      const prefix = sourceName + ":";
+      const prefixKey = sourceName + "::";
+
+      setExportLibrarySource((cur) => (cur === sourceName ? null : cur));
+
+      setIcons((prev) => prev.filter((ic) => ic.source !== sourceName));
+
+      setSetsMeta((prev) => {
+        const next = { ...prev };
+        for (const k of Object.keys(next)) {
+          if (k.startsWith(prefix)) delete next[k];
+        }
+        return next;
+      });
+
+      setGroupsMeta((prev) => {
+        const next = { ...prev };
+        for (const k of Object.keys(next)) {
+          if (k.startsWith(prefix)) delete next[k];
+        }
+        return next;
+      });
+
+      setSources((prev) => {
+        const next = { ...prev };
+        delete next[sourceName];
+        return next;
+      });
+
+      setFavorites((prev) => prev.filter((k) => !k.startsWith(prefixKey)));
+      setRecents((prev) => prev.filter((k) => !k.startsWith(prefixKey)));
+
+      setProjects((prev) =>
+        prev.map((p) => {
+          const keys = p.iconKeys.filter((k) => !k.startsWith(prefixKey));
+          const aliases = p.iconAliases
+            ? Object.fromEntries(
+                Object.entries(p.iconAliases).filter(([k]) => !k.startsWith(prefixKey)),
+              )
+            : undefined;
+          return {
+            ...p,
+            iconKeys: keys,
+            iconAliases:
+              aliases && Object.keys(aliases).length > 0 ? aliases : undefined,
+          };
+        }),
+      );
+
+      setExpandedGroups((prev) => {
+        const next = { ...prev };
+        for (const k of Object.keys(next)) {
+          if (k.startsWith(prefix)) delete next[k];
+        }
+        return next;
+      });
+
+      setActiveGroup((cur) =>
+        cur != null && String(cur).startsWith(prefix) ? null : cur,
+      );
+      setActiveSet((cur) =>
+        cur != null && String(cur).startsWith(prefix) ? null : cur,
+      );
+
+      setSelectedKey((cur) => (cur && cur.startsWith(prefixKey) ? null : cur));
+      setSelectedKeys((prev) => {
+        const next = new Set<string>();
+        for (const k of prev) {
+          if (!k.startsWith(prefixKey)) next.add(k);
+        }
+        return next;
+      });
+
+      const db = dbRef.current;
+      if (db) {
+        void deleteLibraryFromDb(db, sourceName).catch((e) =>
+          console.warn("Delete library DB failed", e),
+        );
+      }
+
+      showToast(`Removed library "${sourceName}"`);
+    },
+    [sources, showToast],
   );
 
   // clearAll is defined further down so it can call loadBundledLibraries
@@ -691,6 +912,7 @@ export function App() {
     setQuickProjectId(null);
     setSelectedKeys(new Set());
     setExportProjectId(null);
+    setExportLibrarySource(null);
     setTileMenu(null);
     clearAllStorage();
     if (dbRef.current) void clearAllDb(dbRef.current);
@@ -1018,7 +1240,10 @@ export function App() {
           onRenameProject={renameProject}
           onDeleteProject={deleteProject}
           onSetQuick={(id) => setQuickProjectId(id)}
-          onExportProject={(id) => setExportProjectId(id)}
+          onExportProject={(id) => {
+            setExportLibrarySource(null);
+            setExportProjectId(id);
+          }}
           onDropOnProject={(id, keys) => addIconsToProject(id, keys)}
         />
 
@@ -1036,6 +1261,7 @@ export function App() {
             toggleGroupExpand={toggleGroupExpand}
             activeGroup={activeGroup}
             activeSet={activeSet}
+            sources={sources}
             onPickGroup={(id) => {
               setActiveGroup(activeGroup === id ? null : id);
               setActiveSet(null);
@@ -1046,6 +1272,18 @@ export function App() {
               setActiveGroup(null);
               setActiveNav("all");
             }}
+            onOpenLibrary={(src) => {
+              setActiveProject(null);
+              setActiveGroup(src + ":__lib");
+              setActiveSet(null);
+              setActiveNav("all");
+            }}
+            onRenameLibrary={renameLibrary}
+            onExportLibrary={(src) => {
+              setExportProjectId(null);
+              setExportLibrarySource(src);
+            }}
+            onDeleteLibrary={deleteLibrary}
           />
         </div>
 
@@ -1182,7 +1420,10 @@ export function App() {
               <button
                 type="button"
                 className="btn btn-ghost proj-banner-btn"
-                onClick={() => setExportProjectId(proj.id)}
+                onClick={() => {
+                  setExportLibrarySource(null);
+                  setExportProjectId(proj.id);
+                }}
                 title="Export"
               >
                 <Icon name="download" size={11} /> Export
@@ -1318,7 +1559,10 @@ export function App() {
                 onClear={(id) => {
                   if (confirm("Clear this project?")) clearProject(id);
                 }}
-                onExport={(id) => setExportProjectId(id)}
+                onExport={(id) => {
+                  setExportLibrarySource(null);
+                  setExportProjectId(id);
+                }}
                 onSetQuick={(id) => setQuickProjectId(id)}
                 onOpenProject={(id) => {
                   setActiveProject(id);
@@ -1422,6 +1666,27 @@ export function App() {
           />
         );
       })()}
+
+      {exportLibrarySource &&
+        (() => {
+          const libIcons = icons.filter((i) => i.source === exportLibrarySource);
+          const synthetic: Project = {
+            id: "__library_export__",
+            name: exportLibrarySource,
+            iconKeys: libIcons.map((i) => i.key),
+          };
+          return (
+            <ProjectExportMenu
+              project={synthetic}
+              icons={libIcons}
+              iconAliases={undefined}
+              settings={undefined}
+              onSettingsChange={() => {}}
+              showToast={showToast}
+              onClose={() => setExportLibrarySource(null)}
+            />
+          );
+        })()}
     </div>
   );
 }

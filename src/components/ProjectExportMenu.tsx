@@ -120,18 +120,41 @@ export function ProjectExportMenu({
   showToast,
   onClose,
 }: Props) {
-  const merged: ProjectExportSettings = {
+  const settingsFingerprint = JSON.stringify(settings ?? null);
+
+  const [draft, setDraft] = useState<ProjectExportSettings>(() => ({
     ...DEFAULT_SETTINGS,
     ...(settings ?? {}),
-  };
-  const { color, pngSize, pngPadding, previewBg } = merged;
+  }));
 
-  const setColor = (v: string) => onSettingsChange({ color: v });
-  const setPngSize = (v: number) =>
-    onSettingsChange({ pngSize: Math.max(8, Math.min(2048, v)) });
-  const setPngPadding = (v: number) =>
-    onSettingsChange({ pngPadding: Math.max(0, v) });
-  const setPreviewBg = (v: PreviewBg) => onSettingsChange({ previewBg: v });
+  useEffect(() => {
+    setDraft({
+      ...DEFAULT_SETTINGS,
+      ...(settings ?? {}),
+    });
+  }, [project.id, project.name, settingsFingerprint]);
+
+  const { color, pngSize, pngPadding, previewBg } = draft;
+
+  const setColor = (v: string) => {
+    const next = { ...draft, color: v };
+    setDraft(next);
+    onSettingsChange({ color: v });
+  };
+  const setPngSize = (v: number) => {
+    const clamped = Math.max(8, Math.min(2048, v));
+    setDraft((d) => ({ ...d, pngSize: clamped }));
+    onSettingsChange({ pngSize: clamped });
+  };
+  const setPngPadding = (v: number) => {
+    const clamped = Math.max(0, v);
+    setDraft((d) => ({ ...d, pngPadding: clamped }));
+    onSettingsChange({ pngPadding: clamped });
+  };
+  const setPreviewBg = (v: PreviewBg) => {
+    setDraft((d) => ({ ...d, previewBg: v }));
+    onSettingsChange({ previewBg: v });
+  };
 
   const [busy, setBusy] = useState(false);
 

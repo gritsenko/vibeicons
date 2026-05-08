@@ -341,6 +341,11 @@ input, textarea {
   font-weight: 500;
   cursor: pointer;
 }
+.tree-group .tree-rename-input,
+.tree-set .tree-rename-input {
+  flex: 1;
+  min-width: 0;
+}
 .tree-set svg { opacity: 0.6; }
 
 /* Modal */
