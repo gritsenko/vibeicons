@@ -35,6 +35,12 @@ import {
   renameLibraryInDb,
 } from "./lib/db";
 import { buildSearch, iconKey, normalizeImportedIcon } from "./lib/icons";
+import {
+  collectFolderEntriesFromDataTransfer,
+  importSvgFolderFromEntries,
+  importSvgFolderFromFiles,
+  normalizePath,
+} from "./lib/svgFolderImport";
 import { Icon } from "./components/Icon";
 import { HierarchyTree } from "./components/HierarchyTree";
 import { DetailPanel } from "./components/DetailPanel";
@@ -971,6 +977,63 @@ export function App() {
     [handleImport, showToast],
   );
 
+  const mergeSvgFolderImport = useCallback(
+    (result: {
+      sourceName: string;
+      icons: IconRecord[];
+      groups: GroupMeta[];
+      sets: SetMeta[];
+      skipped: number;
+    }) => {
+      const { sourceName, icons: newIcons, groups: newGroups, sets: newSets, skipped } =
+        result;
+      const sourceMeta: SourceMeta = { name: sourceName, count: newIcons.length };
+
+      setIcons((prev) => prev.concat(newIcons));
+      setSetsMeta((prev) => {
+        const next = { ...prev };
+        for (const s of newSets) next[String(s.id)] = s;
+        return next;
+      });
+      setGroupsMeta((prev) => {
+        const next = { ...prev };
+        for (const g of newGroups) next[String(g.id)] = g;
+        return next;
+      });
+      setSources((prev) => ({ ...prev, [sourceName]: sourceMeta }));
+
+      const db = dbRef.current;
+      if (db) {
+        void Promise.all([
+          bulkPutIcons(db, newIcons),
+          bulkPutSets(db, newSets),
+          bulkPutGroups(db, newGroups),
+          putSource(db, sourceMeta),
+        ]).catch((e) => console.warn("DB persist failed", e));
+      }
+
+      showToast(
+        `Imported ${newIcons.length} SVG as "${sourceName}"` +
+          (skipped ? ` · ${skipped} skipped` : ""),
+      );
+    },
+    [showToast],
+  );
+
+  const handleFolderImport = useCallback(
+    async (fileList: FileList | null | undefined) => {
+      if (!fileList?.length) return;
+      const files = Array.from(fileList);
+      const result = await importSvgFolderFromFiles(files, sources, icons);
+      if (!result.ok) {
+        showToast(result.message);
+        return;
+      }
+      mergeSvgFolderImport(result);
+    },
+    [sources, icons, showToast, mergeSvgFolderImport],
+  );
+
   const copyText = useCallback(
     (s: string, label = "SVG") => {
       void navigator.clipboard.writeText(s);
@@ -1180,6 +1243,24 @@ export function App() {
               }}
             />
           </label>
+          <label className="btn" style={{ cursor: "pointer" }} title="SVG files + optional .txt tags">
+            <Icon name="folder" size={13} />
+            Import folder
+            <input
+              id="vibe-folder-input"
+              type="file"
+              multiple
+              hidden
+              // Non-standard: folder picker (Chromium / Edge / Safari / Firefox)
+              // @ts-expect-error webkitdirectory / directory not in InputHTMLAttributes
+              webkitdirectory=""
+              directory=""
+              onChange={(e) => {
+                void handleFolderImport(e.target.files);
+                e.target.value = "";
+              }}
+            />
+          </label>
         </div>
       </header>
 
@@ -1319,17 +1400,40 @@ export function App() {
             setDragging(true);
           }}
           onDragLeave={() => setDragging(false)}
-          onDrop={(e) => {
+          onDrop={async (e) => {
             if (!e.dataTransfer.types.includes("Files")) return;
             e.preventDefault();
             setDragging(false);
-            onFiles(e.dataTransfer.files);
+            const dt = e.dataTransfer;
+
+            const collected = await collectFolderEntriesFromDataTransfer(dt);
+            if (collected?.length) {
+              const svgEntries = collected.filter((x) => /\.svg$/i.test(x.file.name));
+              const roots = new Set(
+                collected
+                  .map((x) => normalizePath(x.relativePath).split("/")[0])
+                  .filter(Boolean),
+              );
+              if (svgEntries.length > 0 && roots.size === 1) {
+                const result = await importSvgFolderFromEntries(collected, sources, icons);
+                if (!result.ok) {
+                  showToast(result.message);
+                  return;
+                }
+                mergeSvgFolderImport(result);
+                return;
+              }
+            }
+
+            onFiles(dt.files);
           }}
           onClick={() => document.getElementById("vibe-file-input")?.click()}
         >
           <Icon name="upload" size={16} />
-          <div className="dnd-zone-title">Drop JSON here</div>
-          <div className="dnd-zone-hint">or click to browse · multiple files OK</div>
+          <div className="dnd-zone-title">Drop JSON or SVG folder</div>
+          <div className="dnd-zone-hint">
+            or click to browse · folders via drag from Explorer/Finder
+          </div>
         </div>
       </aside>
 
@@ -1467,6 +1571,7 @@ export function App() {
             loading={bundledLoading}
             onLoadBundled={() => void loadBundledLibraries()}
             onPickFile={() => document.getElementById("vibe-file-input")?.click()}
+            onPickFolder={() => document.getElementById("vibe-folder-input")?.click()}
           />
         ) : isHome ? (
           <HomeView
