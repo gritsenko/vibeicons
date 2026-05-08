@@ -247,16 +247,49 @@ export function App() {
     if (!keys.length) return;
     const ks = new Set(keys);
     setProjects((prev) =>
-      prev.map((p) =>
-        p.id === projId ? { ...p, iconKeys: p.iconKeys.filter((k) => !ks.has(k)) } : p,
-      ),
+      prev.map((p) => {
+        if (p.id !== projId) return p;
+        const restKeys = p.iconKeys.filter((k) => !ks.has(k));
+        const aliasesSnapshot = p.iconAliases;
+        let nextAliases: Record<string, string> | undefined = aliasesSnapshot;
+        if (
+          aliasesSnapshot &&
+          keys.some((k) => k in aliasesSnapshot)
+        ) {
+          const copy = { ...aliasesSnapshot };
+          for (const k of keys) delete copy[k];
+          nextAliases = Object.keys(copy).length > 0 ? copy : undefined;
+        }
+        return { ...p, iconKeys: restKeys, iconAliases: nextAliases };
+      }),
     );
   }, []);
   const clearProject = useCallback((projId: string) => {
     setProjects((prev) =>
-      prev.map((p) => (p.id === projId ? { ...p, iconKeys: [] } : p)),
+      prev.map((p) =>
+        p.id === projId ? { ...p, iconKeys: [], iconAliases: undefined } : p,
+      ),
     );
   }, []);
+  const setProjectIconAlias = useCallback(
+    (projId: string, iconKey: string, displayName: string) => {
+      const ic = icons.find((i) => i.key === iconKey);
+      const libraryName = ic?.name ?? "";
+      const trimmed = displayName.trim();
+      setProjects((prev) =>
+        prev.map((p) => {
+          if (p.id !== projId) return p;
+          const base = { ...(p.iconAliases ?? {}) };
+          if (!trimmed || trimmed === libraryName) delete base[iconKey];
+          else base[iconKey] = trimmed;
+          const nextAliases =
+            Object.keys(base).length > 0 ? base : undefined;
+          return { ...p, iconAliases: nextAliases };
+        }),
+      );
+    },
+    [icons],
+  );
   const createAndAddToProject = useCallback((name: string, keys: string[]) => {
     const id = newProjectId();
     setProjects((prev) => [
@@ -1276,6 +1309,9 @@ export function App() {
                 icons={quickIcons}
                 projects={projects}
                 theme={tweaks.theme}
+                onSetIconAlias={(iconKey, name) => {
+                  if (quickProj) setProjectIconAlias(quickProj.id, iconKey, name);
+                }}
                 onRemove={(k) => {
                   if (quickProj) removeIconsFromProject(quickProj.id, [k]);
                 }}
@@ -1376,6 +1412,7 @@ export function App() {
           <ProjectExportMenu
             project={proj}
             icons={projIcons}
+            iconAliases={proj.iconAliases}
             settings={proj.exportSettings}
             onSettingsChange={(patch) =>
               updateProjectExportSettings(proj.id, patch)

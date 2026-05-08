@@ -64,6 +64,11 @@ export interface Project {
   name: string;
   /** Composite icon keys: "<source>::<name>". */
   iconKeys: string[];
+  /**
+   * Display/export names for this collection only (icon key → label).
+   * Omitted keys use the library icon name.
+   */
+  iconAliases?: Record<string, string>;
   /** Export-modal preferences, remembered per project. */
   exportSettings?: ProjectExportSettings;
 }

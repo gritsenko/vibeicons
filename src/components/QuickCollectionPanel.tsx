@@ -1,12 +1,17 @@
+import { useEffect, useMemo, useState } from "react";
 import type { IconRecord, Project, Tweaks } from "../types";
 import { Icon } from "./Icon";
 import { RenderedIcon } from "./RenderedIcon";
+
+/** Stable fallback so hooks don’t see a new `{}` every render (that was resetting the rename field). */
+const EMPTY_ICON_ALIASES: Record<string, string> = Object.freeze({});
 
 interface Props {
   project: Project | null;
   icons: IconRecord[];
   projects: Project[];
   theme: Tweaks["theme"];
+  onSetIconAlias: (iconKey: string, displayName: string) => void;
   onRemove: (key: string) => void;
   onClear: (id: string) => void;
   onExport: (id: string) => void;
@@ -19,6 +24,7 @@ export function QuickCollectionPanel({
   icons,
   projects,
   theme,
+  onSetIconAlias,
   onRemove,
   onClear,
   onExport,
@@ -26,6 +32,41 @@ export function QuickCollectionPanel({
   onOpenProject,
 }: Props) {
   const fg = theme === "dark" ? "#e6e8ec" : "#1a1d23";
+
+  const aliases = project?.iconAliases ?? EMPTY_ICON_ALIASES;
+  const [selectedKey, setSelectedKey] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+
+  const selectedIcon = useMemo(
+    () => icons.find((i) => i.key === selectedKey) ?? null,
+    [icons, selectedKey],
+  );
+
+  useEffect(() => {
+    setSelectedKey(null);
+    setRenameDraft("");
+  }, [project?.id]);
+
+  useEffect(() => {
+    if (!selectedKey || !icons.some((i) => i.key === selectedKey)) {
+      setSelectedKey(null);
+      setRenameDraft("");
+    }
+  }, [icons, selectedKey]);
+
+  useEffect(() => {
+    if (!selectedIcon) {
+      setRenameDraft("");
+      return;
+    }
+    const label = aliases[selectedIcon.key] ?? selectedIcon.name;
+    setRenameDraft(label);
+  }, [selectedIcon, aliases]);
+
+  const commitRename = () => {
+    if (!selectedIcon) return;
+    onSetIconAlias(selectedIcon.key, renameDraft);
+  };
 
   if (!project) {
     if (projects.length === 0) {
@@ -96,32 +137,70 @@ export function QuickCollectionPanel({
           </button>
         </div>
       </div>
+      {icons.length > 0 && (
+        <label className="quick-panel-rename">
+          <span className="quick-panel-rename-label">Name in collection</span>
+          <input
+            type="text"
+            className="quick-panel-rename-input"
+            value={renameDraft}
+            disabled={!selectedIcon}
+            placeholder={selectedIcon ? undefined : "Select an icon below"}
+            onChange={(e) => setRenameDraft(e.target.value)}
+            onBlur={() => commitRename()}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.currentTarget.blur();
+              }
+            }}
+          />
+        </label>
+      )}
       {icons.length === 0 ? (
         <div className="quick-panel-hint quick-panel-drop">
           Double-click any icon to add it here.
         </div>
       ) : (
         <div className="quick-panel-grid">
-          {icons.map((ic) => (
-            <div
-              key={ic.key}
-              className="quick-cell"
-              title={ic.name + (ic.source ? " · " + ic.source : "")}
-            >
-              <RenderedIcon icon={ic} size={null} color={fg} />
-              <button
-                type="button"
-                className="quick-cell-x"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onRemove(ic.key);
+          {icons.map((ic) => {
+            const displayName = aliases[ic.key] ?? ic.name;
+            const isSel = selectedKey === ic.key;
+            return (
+              <div
+                key={ic.key}
+                role="button"
+                tabIndex={0}
+                className={"quick-cell" + (isSel ? " selected" : "")}
+                title={displayName + (ic.source ? " · " + ic.source : "")}
+                onClick={() => setSelectedKey(ic.key)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    setSelectedKey(ic.key);
+                  }
                 }}
-                title="Remove"
-              >
-                ×
-              </button>
-            </div>
-          ))}
+                >
+                  <div className="quick-cell-icon-wrap">
+                    <RenderedIcon icon={ic} size={null} color={fg} />
+                  </div>
+                  <button
+                    type="button"
+                    className="quick-cell-x"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (selectedKey === ic.key) {
+                        setSelectedKey(null);
+                        setRenameDraft("");
+                      }
+                      onRemove(ic.key);
+                    }}
+                    title="Remove"
+                  >
+                    ×
+                  </button>
+                </div>
+            );
+          })}
         </div>
       )}
       <div className="quick-panel-actions">

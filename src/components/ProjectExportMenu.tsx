@@ -13,6 +13,8 @@ import { colorizeContent } from "../lib/svg";
 interface Props {
   project: Project;
   icons: IconRecord[];
+  /** Collection-only names (icon key → export/display label). */
+  iconAliases?: Record<string, string>;
   settings?: ProjectExportSettings;
   onSettingsChange: (patch: Partial<ProjectExportSettings>) => void;
   showToast: (msg: string) => void;
@@ -101,9 +103,18 @@ function rasterizeToBlob(
   });
 }
 
+function resolvedExportName(
+  icon: IconRecord,
+  iconAliases: Record<string, string> | undefined,
+): string {
+  const a = iconAliases?.[icon.key]?.trim();
+  return a || icon.name;
+}
+
 export function ProjectExportMenu({
   project,
   icons,
+  iconAliases,
   settings,
   onSettingsChange,
   showToast,
@@ -182,7 +193,7 @@ export function ProjectExportMenu({
     const data = {
       name: project.name,
       icons: icons.map((i) => ({
-        name: i.name,
+        name: resolvedExportName(i, iconAliases),
         content: i.content,
         style: i.style,
         width: i.width,
@@ -205,7 +216,10 @@ export function ProjectExportMenu({
       const zip = new JSZip();
       const used = new Map<string, number>();
       for (const i of icons) {
-        zip.file(uniqueName(used, i.name, ".svg"), colorizeContent(i.content, color));
+        zip.file(
+          uniqueName(used, resolvedExportName(i, iconAliases), ".svg"),
+          colorizeContent(i.content, color),
+        );
       }
       const blob = await zip.generateAsync({ type: "blob" });
       downloadBlob(project.name + "-svg.zip", blob);
@@ -226,7 +240,8 @@ export function ProjectExportMenu({
       for (const i of icons) {
         const svg = colorizeContent(i.content, color);
         const blob = await rasterizeToBlob(svg, pngSize, safePadding);
-        if (blob) zip.file(uniqueName(used, i.name, ".png"), blob);
+        if (blob)
+          zip.file(uniqueName(used, resolvedExportName(i, iconAliases), ".png"), blob);
       }
       const blob = await zip.generateAsync({ type: "blob" });
       downloadBlob(`${project.name}-png-${pngSize}.zip`, blob);
@@ -241,7 +256,10 @@ export function ProjectExportMenu({
 
   const copySVGList = () => {
     const txt = icons
-      .map((i) => `<!-- ${i.name} -->\n${colorizeContent(i.content, color)}`)
+      .map(
+        (i) =>
+          `<!-- ${resolvedExportName(i, iconAliases)} -->\n${colorizeContent(i.content, color)}`,
+      )
       .join("\n\n");
     void navigator.clipboard.writeText(txt);
     showToast(`Copied ${icons.length} SVG to clipboard`);
@@ -362,7 +380,11 @@ export function ProjectExportMenu({
                 title={`${pngSize}×${pngSize}px`}
               >
                 {previewUrl && previewIcon ? (
-                  <img src={previewUrl} alt={previewIcon.name} draggable={false} />
+                  <img
+                    src={previewUrl}
+                    alt={resolvedExportName(previewIcon, iconAliases)}
+                    draggable={false}
+                  />
                 ) : previewIcon ? (
                   <RenderedIcon icon={previewIcon} size={null} color={color} />
                 ) : (
