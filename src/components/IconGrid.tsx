@@ -8,6 +8,7 @@ interface Props {
   selectedKey: string | null;
   selectedKeys: Set<string>;
   favoriteKeys: Set<string>;
+  projectKeys?: Set<string>;
   showLabels: boolean;
   fgColor: string;
   tileMin: number;
@@ -26,6 +27,7 @@ export function IconGrid({
   selectedKey,
   selectedKeys,
   favoriteKeys,
+  projectKeys,
   showLabels,
   fgColor,
   tileMin,
@@ -114,6 +116,7 @@ export function IconGrid({
             isSelected={selectedKey === ic.key}
             isMulti={selectedKeys.has(ic.key)}
             isFav={favoriteKeys.has(ic.key)}
+            inProject={projectKeys ? projectKeys.has(ic.key) : false}
             showLabel={showLabels}
             fgColor={fgColor}
             onSelect={onSelect}
@@ -136,6 +139,7 @@ export function IconGrid({
     selectedKey,
     selectedKeys,
     favoriteKeys,
+    projectKeys,
     showLabels,
     fgColor,
     onSelect,
@@ -178,6 +182,7 @@ interface TileProps {
   isSelected: boolean;
   isMulti: boolean;
   isFav: boolean;
+  inProject: boolean;
   showLabel: boolean;
   fgColor: string;
   onSelect: (key: string, e: React.MouseEvent) => void;
@@ -195,6 +200,7 @@ const Tile = memo(function Tile({
   isSelected,
   isMulti,
   isFav,
+  inProject,
   showLabel,
   fgColor,
   onSelect,
@@ -210,6 +216,7 @@ const Tile = memo(function Tile({
         (isSelected ? " selected" : "") +
         (isMulti ? " multi-selected" : "") +
         (isFav ? " is-fav" : "") +
+        (inProject ? " in-project" : "") +
         (showLabel ? " show-label" : "")
       }
       style={{
@@ -231,12 +238,21 @@ const Tile = memo(function Tile({
       }}
       onDragStart={(e) => onDragStart(icon.key, e)}
       onDragEnd={onDragEnd}
-      title={icon.name + (icon.source ? " · " + icon.source : "")}
+      title={
+        icon.name +
+        (icon.source ? " · " + icon.source : "") +
+        (inProject ? " · already in project" : "")
+      }
     >
       <RenderedIcon icon={icon} size={null} color={fgColor} />
       <span className="tile-fav">
         <Icon name="star" size={11} />
       </span>
+      {inProject && (
+        <span className="tile-in-proj" aria-label="In current project">
+          <Icon name="check" size={10} />
+        </span>
+      )}
       <span className="tile-label">{icon.name}</span>
       {icon.source && <span className="tile-source">{icon.source}</span>}
       {isMulti && <span className="tile-multi-mark">✓</span>}

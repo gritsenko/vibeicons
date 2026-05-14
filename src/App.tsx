@@ -53,6 +53,7 @@ import { ProjectsSection } from "./components/ProjectsSection";
 import { QuickCollectionPanel } from "./components/QuickCollectionPanel";
 import { TileContextMenu } from "./components/TileContextMenu";
 import { ProjectExportMenu } from "./components/ProjectExportMenu";
+import { GitHubLink } from "./components/GitHubLink";
 
 declare const __APP_VERSION__: string;
 
@@ -645,6 +646,17 @@ export function App() {
   }, [activeProject, projects]);
 
   const effectiveFilterSet = projectKeySet ?? navFilterSet;
+
+  // Highlight icons that already live in the "quick project" (the project
+  // targeted by double-click add). Lets the user spot already-added icons in
+  // the main grid so they don't re-click them. When no quick project is set
+  // — or the active view IS that project (every icon would be in it) — the
+  // set is empty so tiles get no extra marker.
+  const quickProjectKeySet = useMemo<Set<string>>(() => {
+    if (!quickProjectId || quickProjectId === activeProject) return new Set();
+    const proj = projects.find((p) => p.id === quickProjectId);
+    return new Set(proj ? proj.iconKeys : []);
+  }, [quickProjectId, activeProject, projects]);
 
   // baseFiltered: all filters except tag chips. Tag aggregation is computed
   // from this so toggling a tag doesn't make the other tags disappear.
@@ -1606,6 +1618,7 @@ export function App() {
             selectedKey={selected ? selected.key : null}
             selectedKeys={selectedKeys}
             favoriteKeys={favoritesSet}
+            projectKeys={quickProjectKeySet}
             showLabels={tweaks.showLabels}
             fgColor={fgGridColor}
             tileMin={tileMin}
@@ -1625,6 +1638,7 @@ export function App() {
             selectedKey={selected ? selected.key : null}
             selectedKeys={selectedKeys}
             favoriteKeys={favoritesSet}
+            projectKeys={quickProjectKeySet}
             showLabels={tweaks.showLabels}
             fgColor={fgGridColor}
             tileMin={tileMin}
@@ -1705,6 +1719,7 @@ export function App() {
         </span>
         <span className="statusbar-spacer" />
         <span>VibeIcons · PWA</span>
+        <GitHubLink />
       </div>
 
       {toast && (
