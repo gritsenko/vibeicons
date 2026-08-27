@@ -4,7 +4,7 @@
 
 Собран на **Vite 7 + React 19 + TypeScript**. Иконки, наборы, группы и источники хранятся в IndexedDB; настройки UI, избранное и recents — в localStorage.
 
-В качестве базовой библиотеки в комплекте поставляется [Ant Design Icons](https://github.com/ant-design/ant-design-icons) (~830 иконок в трёх стилях: `outlined`, `filled`, `twotone`). Загрузка ручная: либо кнопкой на плейсхолдере пустой библиотеки, либо в Settings → Bundled icon library.
+Набор предустановленных библиотек описывается в `public/preset.json` (лежит в репозитории). По умолчанию он ссылается на [Ant Design Icons](https://github.com/ant-design/ant-design-icons) (~830 иконок в трёх стилях: `outlined`, `filled`, `twotone`). При первом запуске, если локального кеша ещё нет, preset импортируется автоматически; дальше его можно перезагрузить вручную кнопкой на плейсхолдере пустой библиотеки или в Settings → Preset library.
 
 Деплой: <https://gritsenko.biz/vibeicons/> (Vite собран с `base: "/vibeicons/"`).
 
@@ -24,8 +24,8 @@ npm run build:icons  # форсированная регенерация public/
 ## Возможности
 
 - **Импорт JSON** — drag&drop в зону сайдбара или кнопкой `Import JSON`. Каждый импорт становится отдельным верхнеуровневым разделом библиотеки (имя берётся из имени файла без расширения). ID `sets` и `groups` неймспейсятся источником, чтобы разные библиотеки не перетирали друг друга.
-- **Базовая библиотека Ant Design** — три источника `Ant Design Outlined` / `Filled` / `TwoTone`, подгружаются по кнопке на плейсхолдере пустой библиотеки или в Settings → Bundled icon library (см. `scripts/build-ant-icons.mjs`).
-- **Empty state с CTA** — при отсутствии иконок (свежая БД или после Clear all data) показывается плейсхолдер с кнопками «Load Ant Design Icons» и «Import a JSON file».
+- **Preset-библиотеки** — список источников для первичной инициализации лежит в `public/preset.json`; по умолчанию это Ant Design (`Outlined` / `Filled` / `TwoTone`, см. `scripts/build-ant-icons.mjs`). На первом запуске (нет флага в localStorage и пустая IDB) импортируются автоматически, повторная загрузка — кнопкой на плейсхолдере или в Settings → Preset library.
+- **Empty state с CTA** — при отсутствии иконок (например, после Clear all data) показывается плейсхолдер с кнопками «Load preset icons» и «Import a JSON file».
 - **Иерархия Library** — `groups` → вложенные `groups` → `sets`, со счётчиками и сворачиванием. По умолчанию все ветки свёрнуты.
 - **Sources** — список импортированных файлов в сайдбаре, по клику фильтрует иконки только из этого источника.
 - **Поиск** — по имени, тегам и названию библиотеки. Фокус по `/`. Поисковый индекс предвычисляется на импорт (`buildSearch`), `useDeferredValue` гасит лаги при наборе.
@@ -36,7 +36,7 @@ npm run build:icons  # форсированная регенерация public/
 - **Перекраска** — 8 пресетов + native color picker + hex input. Иконки рендерятся через `currentColor`, при экспорте `currentColor` заменяется на выбранный hex.
 - **Скачивание/копирование** — SVG-код с подсветкой, кнопки SVG/PNG (PNG рендерится через canvas, 256px).
 - **Избранное** (двойной клик по иконке или `f`) и **Recents** (автоматически по выбору, последние 24).
-- **Settings-модалка** — статистика библиотеки, список источников, кнопка загрузки базовой библиотеки Ant Design, «Clear all data»: сбрасывает IDB и localStorage в пустое состояние.
+- **Settings-модалка** — статистика библиотеки, список источников, кнопка загрузки preset-библиотеки, «Clear all data» (сбрасывает IDB и localStorage в пустое состояние, библиотека остаётся пустой и после перезагрузки) и «Full reset» — полный сброс вместе с флагом preset'а + перезагрузка страницы, то есть возврат в состояние свежей установки с повторной инициализацией preset'а.
 - **Темы** — светлая по умолчанию, тёмная по кнопке. Акцент `#F97316`. Плотность сетки S/M/L (compact/comfortable/spacious).
 - **Хоткеи** — `/` фокус поиска, `Esc` очистить запрос, `←/→` навигация по сетке, `f` toggle favorite.
 
@@ -68,6 +68,7 @@ npm run build:icons  # форсированная регенерация public/
 scripts/
 └── build-ant-icons.mjs       # Генератор public/libraries/ant-{outlined,filled,twotone}.json
 public/
+├── preset.json               # Список библиотек для первичной инициализации (в VCS)
 └── libraries/                # Сгенерированные базовые библиотеки (gitignored)
 src/
 ├── main.tsx                  # createRoot bootstrap
@@ -77,6 +78,7 @@ src/
 ├── lib/
 │   ├── db.ts                 # IDB v2: openDb, getAll*, bulkPut*, clearAll, deleteIconsBySource
 │   ├── storage.ts            # readJson/writeJson/clearAllStorage для localStorage
+│   ├── preset.ts             # Чтение public/preset.json + флаг «preset уже применён»
 │   ├── icons.ts              # iconKey, normalizeImportedIcon, rehydrateLegacyIcon, buildSearch
 │   └── svg.ts                # preprocessSvgContent, colorizeContent, downloadSVG/PNG
 └── components/
@@ -86,9 +88,9 @@ src/
     ├── IconGrid.tsx          # Виртуализированная сетка (ResizeObserver + onScroll)
     ├── GroupedIconGrid.tsx   # Сетка с группировкой по сетам (без виртуализации)
     ├── HomeView.tsx          # Стартовая страница с источниками и стилями
-    ├── LibraryEmpty.tsx      # Плейсхолдер пустой библиотеки с CTA на Ant Design
+    ├── LibraryEmpty.tsx      # Плейсхолдер пустой библиотеки с CTA на preset
     ├── DetailPanel.tsx       # Правая панель деталей
-    └── SettingsModal.tsx     # Модалка настроек / сброса / загрузки Ant Design
+    └── SettingsModal.tsx     # Модалка настроек / сброса / загрузки preset'а
 ```
 
 ## Хранение данных
@@ -103,18 +105,45 @@ src/
 | Избранное / недавние              | localStorage                                | `vibeicons.v1.favs` / `.recents` |
 | Настройки UI (theme/density/…)    | localStorage                                | `vibeicons.v1.tweaks`         |
 | `groupBy` toggle                  | localStorage                                | `vibeicons.v1.groupBy`        |
+| Флаг «preset уже применён»        | localStorage                                | `vibeicons.preset.v1.init`    |
 
 IndexedDB используется для иконок специально — в localStorage обычно ~5 МБ квоты, чего мало даже для одной средней библиотеки. На апгрейде с v1 (где иконки лежали единым массивом в `kv.icons`) данные мигрируются в новую схему.
 
 Импорты пишутся в IDB **дельтами** (`bulkPutIcons` / `bulkPutSets` / `bulkPutGroups` / `putSource`), без перезаписи всего набора.
 
-## Базовая библиотека (Ant Design Icons)
+## Preset-библиотеки (`public/preset.json`)
 
-Иконки из [`@ant-design/icons-svg`](https://www.npmjs.com/package/@ant-design/icons-svg) (devDep) конвертируются в импортный JSON-формат скриптом `scripts/build-ant-icons.mjs`. Скрипт прошивается в `predev` и `prebuild`, результат пишется в `public/libraries/` (этот каталог в `.gitignore`).
+Файл лежит в репозитории и описывает, чем приложение инициализирует себя на пустом устройстве:
 
-Загружаются они **вручную**: либо кнопкой «Load Ant Design Icons» на плейсхолдере пустой библиотеки, либо в Settings → Bundled icon library. Импорт идёт через стандартный `handleImport`, никакого специального кода. Уже загруженные source'ы пропускаются, поэтому повторные клики идемпотентны.
+```jsonc
+{
+  "version": 1,
+  "sources": [
+    // kind:"manifest" — index.json, перечисляющий несколько библиотек
+    { "kind": "manifest", "url": "libraries/index.json", "name": "Ant Design Icons" },
+    // kind:"library" (по умолчанию) — одиночный импортный JSON
+    { "url": "libraries/my-pack.json", "name": "My Pack" },
+    { "url": "https://example.com/icons.json", "name": "Remote Pack" }
+  ]
+}
+```
 
-«Clear all data» в настройках сбрасывает IDB и localStorage в пустое состояние — пользователь возвращается на плейсхолдер и сам решает, загружать ли базовую библиотеку обратно.
+Относительные URL резолвятся от `import.meta.env.BASE_URL`, абсолютные `http(s)` берутся как есть. Для `kind: "manifest"` имена источников берутся из поля `source` манифеста.
+
+Иконки Ant Design из [`@ant-design/icons-svg`](https://www.npmjs.com/package/@ant-design/icons-svg) (devDep) конвертируются в импортный JSON скриптом `scripts/build-ant-icons.mjs` — он прошит в `predev`/`prebuild` и пишет `public/libraries/` (каталог в `.gitignore`), включая `index.json`, на который и ссылается preset.
+
+Логика инициализации (`src/lib/preset.ts` + эффекты в `App.tsx`):
+
+1. На старте читаются IDB и `public/preset.json`.
+2. Если флага `vibeicons.preset.v1.init` в localStorage нет **и** библиотека пуста — preset импортируется автоматически через обычный `handleImport`, после успешного импорта ставится флаг.
+3. Если библиотека не пуста (обновление уже работающей установки) — флаг просто ставится, ничего не импортируется.
+4. Если preset недоступен (нет файла, офлайн) — флаг не ставится, попытка повторится на следующем запуске.
+5. Уже загруженные source'ы всегда пропускаются, поэтому и авто-импорт, и ручные клики идемпотентны.
+
+Сбросы в Settings:
+
+- **Clear all data** — очищает IDB и ключи `vibeicons.v1.*`, но **не** флаг preset'а: библиотека остаётся пустой и после перезагрузки, пользователь сам решает, грузить ли preset обратно.
+- **Full reset** — очищает IDB, весь localStorage приложения **вместе с флагом** preset'а и перезагружает страницу: приложение поднимается как свежая установка и заново проходит первичную инициализацию (нужен в основном для проверки этого сценария).
 
 ## PWA / SEO
 

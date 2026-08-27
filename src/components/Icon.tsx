@@ -22,6 +22,8 @@ const PATHS: Record<string, string> = {
   trash: "M3 6h18M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6",
   home: "M3 11l9-8 9 8M5 9v11h5v-6h4v6h5V9",
   rows: "M3 5h18M3 12h18M3 19h18",
+  refresh:
+    "M21 12a9 9 0 01-9 9 9 9 0 01-8.5-6M3 12a9 9 0 019-9 9 9 0 018.5 6M3 4v5h5M21 20v-5h-5",
 };
 
 interface Props {

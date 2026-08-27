@@ -34,22 +34,34 @@ If you change ID handling, make sure all four maps stay coherent: `icons[].set_i
 
 ### Storage split
 
-Icons, sets, groups and sources live in **IndexedDB** (`vibeicons`, schema v2) as proper records across five object stores — `icons` (keyPath `"key"` = `<source>::<name>`, with indexes on `set_id` / `source` / `style` / `name`), `sets` (keyPath `"id"`), `groups` (keyPath `"id"`), `sources` (keyPath `"name"`), and a free-form `meta` store. Tweaks, favorites and recents stay in **localStorage** under the `vibeicons.v1.*` prefix because they're tiny and benefit from synchronous reads.
+Icons, sets, groups and sources live in **IndexedDB** (`vibeicons`, schema v2) as proper records across five object stores — `icons` (keyPath `"key"` = `<source>::<name>`, with indexes on `set_id` / `source` / `style` / `name`), `sets` (keyPath `"id"`), `groups` (keyPath `"id"`), `sources` (keyPath `"name"`), and a free-form `meta` store. Tweaks, favorites and recents stay in **localStorage** under the `vibeicons.v1.*` prefix because they're tiny and benefit from synchronous reads. One key sits deliberately outside that prefix: `vibeicons.preset.v1.init`, the "preset already applied" flag — `clearAllStorage()` must not clear it (see below).
 
 Loading order in `App.tsx`:
 1. `useState` initializes `icons` to `[]`. Brief empty-grid paint on first load is acceptable.
 2. A `useEffect` opens the DB, then `Promise.all`s `getAllIcons` / `getAllSets` / `getAllGroups` / `getAllSources` and replaces state.
-3. If `icons.length === 0`, the main area renders `<LibraryEmpty>` instead of the grid — a placeholder with two CTAs ("Load Ant Design Icons" and "Import a JSON file"). There is **no** automatic import; bundled libraries load only on explicit user action.
+3. If `icons.length === 0`, the main area renders `<LibraryEmpty>` instead of the grid — a placeholder with CTAs ("Load preset icons", "Import a JSON file", "Import SVG folder"). The only automatic import is the first-run preset (see below); everything else is explicit user action.
 4. Imports persist as **deltas** (`bulkPutIcons` / `bulkPutSets` / `bulkPutGroups` / `putSource`) — no full-array rewrites.
-5. `clearAll` calls `clearAllDb` (one transaction across every store) and resets all state to empty. The user is dropped back on the `LibraryEmpty` placeholder; restoring Ant Design is a deliberate click, not magic.
+5. `clearAll` calls `clearAllDb` (one transaction across every store) and resets all state to empty. The user is dropped back on the `LibraryEmpty` placeholder; restoring the preset is a deliberate click, not magic — the preset flag survives, so a reload keeps the library empty.
+6. `resetEverything` (Settings → Full reset) is the testing affordance for the cold-start path: `clearAllStorage()` + `clearPresetInitialized()` + `clearAllDb`, then `window.location.reload()` so the app comes back up as a fresh install and re-runs the preset import.
 
 A v1→v2 migration path exists: when `openDb()` upgrades from version 1, it reads any legacy `kv.icons` array within the upgrade transaction, returns it as `legacyIcons`, and the post-open code calls `rehydrateLegacyIcon` + `bulkPutIcons` to write it into the new shape.
 
-### Bundled base library (Ant Design)
+### Preset libraries (`public/preset.json`) and the bundled Ant Design build
 
 The base library is **Ant Design Icons** (`@ant-design/icons-svg`, MIT). `scripts/build-ant-icons.mjs` reads each SVG from the package's `inline-svg/{outlined,filled,twotone}/` directories, injects `fill="currentColor"` on the root `<svg>` so the `style.color` cascade actually works (outlined ant icons have no fills set otherwise), and writes three importable JSON files plus a manifest into `public/libraries/`. The script is wired to `predev`/`prebuild` and the output dir is gitignored. Twotone icons render monochrome because the preprocessor collapses both fill colors to `currentColor` — that's an accepted tradeoff. Each theme becomes its own `source` (`Ant Design Outlined` / `Ant Design Filled` / `Ant Design TwoTone`), which keeps icon names like `home` distinct across themes via the composite key and makes the Variations panel light up naturally.
 
-Loading is triggered manually by `App.tsx::loadBundledLibraries` — exposed to `LibraryEmpty` (CTA on the placeholder) and `SettingsModal` (button under "Bundled icon library"). The function fetches `libraries/index.json`, then for each entry skips already-loaded sources and feeds the rest into the regular `handleImport` path with a shared `taken` set. `bundledLoading` state drives the disabled+spinner state on both buttons. Result: idempotent on repeat clicks, never silently expands the library behind the user's back.
+What the app initialises itself with is **data, not code**: `public/preset.json` (checked into VCS) lists the sources. `src/lib/preset.ts::loadPresetSources` fetches it and expands each entry into `{name, url}` pairs — `kind: "library"` (default) is a single import-ready JSON, `kind: "manifest"` is an index.json listing several (that's how the generated Ant Design manifest is referenced). Relative URLs resolve against `import.meta.env.BASE_URL`, absolute http(s) URLs pass through. It never throws: a missing or broken preset yields `[]`.
+
+`App.tsx::loadPresetLibraries` walks that list, skips sources already present in `sources`, and feeds the rest through the regular `handleImport` path with a shared `taken` set. It backs three call sites: the `LibraryEmpty` CTA, the Settings → "Preset library" button, and the first-run effect. `presetLoading` drives the disabled+spinner state.
+
+First-run import (the effect right after `loadPresetLibraries`, guarded by `presetInitRef` so it fires once per mount):
+
+- waits for both `initialLoad.done` (the IDB cold read finished — set even when `openDb()` returns null) and `preset.loaded`;
+- no-ops if `isPresetInitialized()`;
+- if the cold read found icons (an install predating preset.json), just marks the flag — never imports on top of existing data;
+- otherwise imports the preset and marks the flag **only if something was actually imported**, so an offline/404 first launch retries next time.
+
+Result: idempotent on repeat clicks, one automatic import per device, and the library never silently grows behind the user's back after that.
 
 ### Rendering imported SVG
 

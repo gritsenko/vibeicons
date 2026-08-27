@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "_comment": "Libraries the app imports on a cold start (no local cache yet). Entries are fetched relative to the app base URL; kind:\"manifest\" points at an index.json listing several libraries, kind:\"library\" (default) at a single import-ready JSON.",
+  "sources": [
+    {
+      "kind": "manifest",
+      "url": "libraries/index.json",
+      "name": "Ant Design Icons"
+    }
+  ]
+}

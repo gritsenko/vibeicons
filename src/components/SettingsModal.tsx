@@ -1,22 +1,20 @@
 import type { GroupsMetaMap, SourcesMap } from "../types";
 import { Icon } from "./Icon";
 
-const ANT_SOURCE_NAMES = [
-  "Ant Design Outlined",
-  "Ant Design Filled",
-  "Ant Design TwoTone",
-];
-
 interface Props {
   iconCount: number;
   sources: SourcesMap;
   setsCount: number;
   groupsMeta: GroupsMetaMap;
   favoritesCount: number;
-  bundledLoading: boolean;
+  /** Source names listed by public/preset.json (already expanded from manifests). */
+  presetSourceNames: string[];
+  presetLoading: boolean;
+  resetting: boolean;
   onClose: () => void;
   onClearAll: () => void;
-  onLoadBundled: () => void;
+  onLoadPreset: () => void;
+  onFullReset: () => void;
 }
 
 export function SettingsModal({
@@ -25,13 +23,17 @@ export function SettingsModal({
   setsCount,
   groupsMeta,
   favoritesCount,
-  bundledLoading,
+  presetSourceNames,
+  presetLoading,
+  resetting,
   onClose,
   onClearAll,
-  onLoadBundled,
+  onLoadPreset,
+  onFullReset,
 }: Props) {
-  const antLoadedCount = ANT_SOURCE_NAMES.filter((n) => sources[n]).length;
-  const allAntLoaded = antLoadedCount === ANT_SOURCE_NAMES.length;
+  const presetTotal = presetSourceNames.length;
+  const presetLoadedCount = presetSourceNames.filter((n) => sources[n]).length;
+  const allPresetLoaded = presetTotal > 0 && presetLoadedCount === presetTotal;
   const sourceList = Object.values(sources);
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -72,43 +74,48 @@ export function SettingsModal({
           </section>
           <section className="settings-row">
             <div>
-              <div className="settings-row-title">Bundled icon library</div>
+              <div className="settings-row-title">Preset library</div>
               <div className="settings-row-hint">
-                Loads Ant Design Icons (~830 icons across outlined / filled / twotone) into your
-                library. Already-loaded styles are skipped, so this is safe to click any time.
-                {antLoadedCount > 0 && (
+                {presetTotal === 0 ? (
                   <>
-                    {" "}
+                    <code>public/preset.json</code> lists nothing loadable right now (missing file
+                    or unreachable URLs). Check the console for details.
+                  </>
+                ) : (
+                  <>
+                    Imported automatically on a first run and re-loadable here. Configured in{" "}
+                    <code>public/preset.json</code>: {presetSourceNames.join(", ")}. Already-loaded
+                    sources are skipped, so this is safe to click any time.{" "}
                     <strong>
-                      {antLoadedCount}/{ANT_SOURCE_NAMES.length}
+                      {presetLoadedCount}/{presetTotal}
                     </strong>{" "}
-                    style{antLoadedCount === 1 ? "" : "s"} loaded.
+                    loaded.
                   </>
                 )}
               </div>
             </div>
             <button
               className="btn btn-primary"
-              onClick={onLoadBundled}
-              disabled={bundledLoading || allAntLoaded}
+              onClick={onLoadPreset}
+              disabled={presetLoading || allPresetLoaded || presetTotal === 0}
             >
-              <Icon name={bundledLoading ? "clock" : "download"} size={13} />
-              {bundledLoading
+              <Icon name={presetLoading ? "clock" : "download"} size={13} />
+              {presetLoading
                 ? "Loading…"
-                : allAntLoaded
+                : allPresetLoaded
                   ? "All loaded"
-                  : antLoadedCount > 0
+                  : presetLoadedCount > 0
                     ? "Load missing"
-                    : "Load Ant Design"}
+                    : "Load preset"}
             </button>
           </section>
           <section className="settings-row danger">
             <div>
-              <div className="settings-row-title">Reset everything</div>
+              <div className="settings-row-title">Clear library</div>
               <div className="settings-row-hint">
-                Removes all imported icons, sets, groups, sources, favorites and recents. The
-                library is left empty — load Ant Design again from the section above if you want
-                it back.
+                Removes all imported icons, sets, groups, sources, favorites, collections and
+                recents. The library is left empty and stays empty on reload — load the preset
+                again from the section above if you want it back.
               </div>
             </div>
             <button
@@ -118,6 +125,31 @@ export function SettingsModal({
               }}
             >
               <Icon name="trash" size={13} /> Clear all data
+            </button>
+          </section>
+          <section className="settings-row danger">
+            <div>
+              <div className="settings-row-title">Full reset</div>
+              <div className="settings-row-hint">
+                Wipes IndexedDB and every local setting, including the “preset already applied”
+                flag, then reloads the app — it comes back up exactly like a fresh install and
+                re-imports the preset library.
+              </div>
+            </div>
+            <button
+              className="btn btn-danger"
+              disabled={resetting}
+              onClick={() => {
+                if (
+                  confirm(
+                    "Full reset: delete all local data and reload as a fresh install? This cannot be undone.",
+                  )
+                )
+                  onFullReset();
+              }}
+            >
+              <Icon name={resetting ? "clock" : "refresh"} size={13} />
+              {resetting ? "Resetting…" : "Reset & reload"}
             </button>
           </section>
         </div>
