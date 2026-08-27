@@ -7,7 +7,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 npm install
 npm run dev          # Vite dev server on http://localhost:5173
-npm run build        # tsc -b (project refs) && vite build → dist/
+npm run build        # tsc -b (project refs) && vite build → dist/ (base /vibeicons/, GitHub Pages)
+npm run build:deploy # same, but --base=/ → dist/ for the VM deploy (see Deployment)
 npm run preview      # serve production build locally
 npm run typecheck    # tsc -b --noEmit (no Vite)
 ```
@@ -39,33 +40,39 @@ Icons, sets, groups and sources live in **IndexedDB** (`vibeicons`, schema v2) a
 Loading order in `App.tsx`:
 1. `useState` initializes `icons` to `[]`. Brief empty-grid paint on first load is acceptable.
 2. A `useEffect` opens the DB, then `Promise.all`s `getAllIcons` / `getAllSets` / `getAllGroups` / `getAllSources` and replaces state.
-3. If `icons.length === 0`, the main area renders `<LibraryEmpty>` instead of the grid — a placeholder with CTAs ("Load preset icons", "Import a JSON file", "Import SVG folder"). The only automatic import is the first-run preset (see below); everything else is explicit user action.
+3. If `icons.length === 0`, the main area renders `<LibraryEmpty>` instead of the grid — the icon catalog (see below) plus "Import a JSON file" / "Import SVG folder" CTAs. Every import is explicit user action; nothing is pulled in automatically unless preset.json flags an entry `auto`.
 4. Imports persist as **deltas** (`bulkPutIcons` / `bulkPutSets` / `bulkPutGroups` / `putSource`) — no full-array rewrites.
-5. `clearAll` calls `clearAllDb` (one transaction across every store) and resets all state to empty. The user is dropped back on the `LibraryEmpty` placeholder; restoring the preset is a deliberate click, not magic — the preset flag survives, so a reload keeps the library empty.
-6. `resetEverything` (Settings → Full reset) is the testing affordance for the cold-start path: `clearAllStorage()` + `clearPresetInitialized()` + `clearAllDb`, then `window.location.reload()` so the app comes back up as a fresh install and re-runs the preset import.
+5. `clearAll` calls `clearAllDb` (one transaction across every store) and resets all state to empty. The user is dropped back on the `LibraryEmpty` placeholder; re-importing from the catalog is a deliberate click, not magic — the preset flag survives, so a reload keeps the library empty.
+6. `resetEverything` (Settings → Full reset) is the testing affordance for the cold-start path: `clearAllStorage()` + `clearPresetInitialized()` + `clearAllDb`, then `window.location.reload()` so the app comes back up as a fresh install, on the catalog.
 
 A v1→v2 migration path exists: when `openDb()` upgrades from version 1, it reads any legacy `kv.icons` array within the upgrade transaction, returns it as `legacyIcons`, and the post-open code calls `rehydrateLegacyIcon` + `bulkPutIcons` to write it into the new shape.
 
-### Preset libraries (`public/preset.json`) and the bundled Ant Design build
+### The icon catalog (`public/preset.json`) and the bundled libraries
 
-The base library is **Ant Design Icons** (`@ant-design/icons-svg`, MIT). `scripts/build-ant-icons.mjs` reads each SVG from the package's `inline-svg/{outlined,filled,twotone}/` directories, injects `fill="currentColor"` on the root `<svg>` so the `style.color` cascade actually works (outlined ant icons have no fills set otherwise), and writes three importable JSON files plus a manifest into `public/libraries/`. The script is wired to `predev`/`prebuild` and the output dir is gitignored. Twotone icons render monochrome because the preprocessor collapses both fill colors to `currentColor` — that's an accepted tradeoff. Each theme becomes its own `source` (`Ant Design Outlined` / `Ant Design Filled` / `Ant Design TwoTone`), which keeps icon names like `home` distinct across themes via the composite key and makes the Variations panel light up naturally.
+What the app initialises itself with is **data, not code**: `public/preset.json` (checked into VCS) lists the libraries it offers. `src/lib/preset.ts::loadPresetSources` fetches it and expands each entry into `{name, url, auto, collection, count?, bytes?}` — `kind: "library"` (default) is a single import-ready JSON, `kind: "manifest"` is an index.json listing several. Relative URLs resolve against `import.meta.env.BASE_URL`, absolute http(s) URLs pass through. It never throws: a missing or broken preset yields `[]`.
 
-What the app initialises itself with is **data, not code**: `public/preset.json` (checked into VCS) lists the sources. `src/lib/preset.ts::loadPresetSources` fetches it and expands each entry into `{name, url}` pairs — `kind: "library"` (default) is a single import-ready JSON, `kind: "manifest"` is an index.json listing several (that's how the generated Ant Design manifest is referenced). Relative URLs resolve against `import.meta.env.BASE_URL`, absolute http(s) URLs pass through. It never throws: a missing or broken preset yields `[]`.
+That flat list is rendered by `components/PresetCatalog.tsx` — grouped by `collection`, one row per library with its icon count and size, a per-row **Import** button, and an **Import all**. The catalog appears in two places: inside `LibraryEmpty` (so a first-run visitor picks what they want from the empty state) and in the Settings modal. `App.tsx::importPresetSources(entries?)` does the work: it skips sources already present in `sources`, feeds the rest through the regular `handleImport` path with a shared `taken` set, and tracks in-flight source names in `presetBusy` so each row spins on its own.
 
-`App.tsx::loadPresetLibraries` walks that list, skips sources already present in `sources`, and feeds the rest through the regular `handleImport` path with a shared `taken` set. It backs three call sites: the `LibraryEmpty` CTA, the Settings → "Preset library" button, and the first-run effect. `presetLoading` drives the disabled+spinner state.
-
-First-run import (the effect right after `loadPresetLibraries`, guarded by `presetInitRef` so it fires once per mount):
+First-run import (the effect right after `importPresetSources`, guarded by `presetInitRef` so it fires once per mount) only imports entries flagged `"auto": true` in preset.json — **none are by default**, because the bundled packs are tens of megabytes and the catalog is what a first-run visitor should see. The machinery is still live for a small default library, should one be wanted:
 
 - waits for both `initialLoad.done` (the IDB cold read finished — set even when `openDb()` returns null) and `preset.loaded`;
 - no-ops if `isPresetInitialized()`;
 - if the cold read found icons (an install predating preset.json), just marks the flag — never imports on top of existing data;
-- otherwise imports the preset and marks the flag **only if something was actually imported**, so an offline/404 first launch retries next time.
+- with no `auto` entries, marks the flag and stops;
+- otherwise imports them and marks the flag **only if something was actually imported**, so an offline/404 first launch retries next time.
 
-Result: idempotent on repeat clicks, one automatic import per device, and the library never silently grows behind the user's back after that.
+#### Where the library JSONs come from
+
+Two generators write into `public/libraries/` (gitignored, wired to `predev`/`prebuild`):
+
+- `scripts/build-ant-icons.mjs` — **Ant Design Icons** (`@ant-design/icons-svg`, MIT). Reads each SVG from `inline-svg/{outlined,filled,twotone}/`, injects `fill="currentColor"` on the root `<svg>` (outlined ant icons set no fills otherwise), and writes `ant-{theme}.json` + `index.json`. Twotone icons render monochrome because the preprocessor collapses both fill colors — an accepted tradeoff. Each theme is its own `source`, which keeps names like `home` distinct via the composite key and makes the Variations panel light up.
+- `scripts/build-icon-packs.mjs` — the large art packs kept **outside** the repo under `ICON_PACKS_DIR` (default `C:/GameDevAssets/icons`): `Core Line/` (Core/Flex/Plump, 9 libraries, ~47k icons) and `MyUA/` (Bold/Bulk/Linear, ~2.7k). It normalises the inconsistent file names (`Plump line.json`, and `Сore Solid.json` whose first letter is a Cyrillic С), strips dead weight from the markup, and writes one JSON per library plus `core-index.json` / `myua-index.json`. A missing pack directory is a **warning, not an error** — it writes an empty manifest so a clone without the assets still builds and the catalog just lists nothing from that pack (this is what happens on the GitHub Pages CI build).
 
 ### Rendering imported SVG
 
-SVG content is **preprocessed once at import time** by `lib/svg.ts::preprocessSvgContent`: strips `width`/`height`, sets `preserveAspectRatio="xMidYMid meet"`, infers a `viewBox` from `width`/`height` if missing, and rewrites every non-`none` `fill="..."` to `fill="currentColor"`. The processed string is what's stored in IDB, so `RenderedIcon.tsx` just `dangerouslySetInnerHTML`s it once and lets `style.color` cascade via `currentColor`. No per-render attribute mutation. `RenderedIcon` is wrapped in `React.memo` keyed on `icon.key + size + color`. For download/copy, `colorizeContent` swaps `currentColor` (and any other non-`none` fill) to a literal hex.
+SVG content is **preprocessed once at import time** by `lib/svg.ts::preprocessSvgContent`: strips `width`/`height`, sets `preserveAspectRatio="xMidYMid meet"`, infers a `viewBox` from `width`/`height` if missing, and rewrites every non-`none` `fill="..."` **and** `stroke="..."` to `currentColor`. Stroke matters: whole libraries (MyUA Linear/Bold and most outline sets) draw with strokes on a `fill="none"` root and would otherwise keep their baked-in colour. The processed string is what's stored in IDB, so `RenderedIcon.tsx` just `dangerouslySetInnerHTML`s it once and lets `style.color` cascade via `currentColor`. No per-render attribute mutation. `RenderedIcon` is wrapped in `React.memo` keyed on `icon.key + size + color`. For download/copy, `colorizeContent` swaps `currentColor` (and any other non-`none` fill *or stroke*) to a literal hex.
+
+One trap worth knowing: the grid/preview CSS force-fills icon shapes (`.tile svg … { fill: currentColor !important }`). Those selectors are guarded with `:not([fill="none"])` on both the `<svg>` and the shape — without the guard, every outline icon renders as a solid blob.
 
 ### Virtualized grid
 
@@ -94,4 +101,10 @@ Two project refs (`tsconfig.app.json` for `src/`, `tsconfig.node.json` for `vite
 - No `tweaks-panel.jsx` from the design bundle — that was Claude Design's hot-tweak overlay, not a product feature. Theme/density/accent/labels are reachable via the topbar buttons, density segment in the toolbar, and Settings modal.
 - No router. The whole app is one screen with side panels.
 - No state library. `useState` + `useMemo` are sufficient at this size; resist adding Zustand/Redux unless complexity warrants it.
+### Deployment (VM `mglabs-vm-icons`, https://icons.vibe.mglabs.pro)
+
+`Dockerfile` + `nginx.conf` + `docker-compose.yml` in the repo root serve the built `dist/` from nginx on container port 80, published on host port 3000 (the platform route). The image build does **not** run Vite: the VM has 1 GB of RAM, so `npm run build:deploy` runs on the dev machine (it also needs the out-of-repo icon packs) and `dist/` is shipped. Note `--base=/` — the default `npm run build` targets the GitHub Pages subpath `/vibeicons/`.
+
+The image gzips every text asset at build time and nginx serves them with `gzip_static`, which keeps the single CPU out of the compression path for the multi-MB library JSONs. `GET /health` returns 200 for the platform's route probe. Redeploy: rebuild `dist/`, copy it to `/opt/icons`, `sudo docker compose up -d --build`.
+
 - No `seed.ts`. The earlier hand-rolled placeholder records were removed when Ant Design became the bundled base library — `clearAll` now restores Ant Design rather than a synthetic seed set.

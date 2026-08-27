@@ -1,0 +1,9 @@
+services:
+  web:
+    build: .
+    image: vibeicons:latest
+    container_name: vibeicons-web
+    restart: unless-stopped
+    # Left side is the platform route port (https://icons.vibe.mglabs.pro → VM:3000).
+    ports:
+      - "3000:80"

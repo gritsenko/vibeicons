@@ -13,6 +13,12 @@ export interface PresetEntry {
   /** Source name (namespacing key). Defaults to the URL's base name. */
   name?: string;
   kind?: "library" | "manifest";
+  /** Import without asking on a first run. Defaults to false: the library is
+   *  only offered in the catalog (empty state / Settings) and imported on
+   *  demand — the icon packs are far too large to push onto every visitor. */
+  auto?: boolean;
+  /** Catalog heading this entry's libraries are listed under. */
+  collection?: string;
 }
 
 export interface PresetFile {
@@ -24,10 +30,18 @@ export interface PresetFile {
 export interface PresetSource {
   name: string;
   url: string;
+  /** Imported automatically on a first run (see PresetEntry.auto). */
+  auto: boolean;
+  /** Catalog heading, when the entry declares one. */
+  collection?: string;
+  /** Icon count, when the manifest records it — catalog display only. */
+  count?: number;
+  /** Library size in bytes, when the manifest records it — catalog display only. */
+  bytes?: number;
 }
 
 interface ManifestFile {
-  libraries?: Array<{ file: string; source?: string }>;
+  libraries?: Array<{ file: string; source?: string; count?: number; bytes?: number }>;
 }
 
 /** localStorage flag marking "the preset has already been applied on this device".
@@ -92,17 +106,18 @@ export async function loadPresetSources(): Promise<PresetSource[]> {
 
   const out: PresetSource[] = [];
   const seen = new Set<string>();
-  const push = (name: string, url: string) => {
-    if (!name || !url || seen.has(name)) return;
-    seen.add(name);
-    out.push({ name, url });
+  const push = (src: PresetSource) => {
+    if (!src.name || !src.url || seen.has(src.name)) return;
+    seen.add(src.name);
+    out.push(src);
   };
 
   for (const entry of file.sources ?? []) {
     if (!entry || typeof entry.url !== "string" || !entry.url) continue;
     const url = resolve(entry.url, base);
+    const auto = entry.auto === true;
     if (entry.kind !== "manifest") {
-      push(entry.name ?? nameFromUrl(url), url);
+      push({ name: entry.name ?? nameFromUrl(url), url, auto, collection: entry.collection });
       continue;
     }
     try {
@@ -115,7 +130,14 @@ export async function loadPresetSources(): Promise<PresetSource[]> {
       for (const lib of manifest.libraries ?? []) {
         if (!lib || typeof lib.file !== "string") continue;
         const libUrl = resolve(lib.file, url);
-        push(lib.source ?? nameFromUrl(libUrl), libUrl);
+        push({
+          name: lib.source ?? nameFromUrl(libUrl),
+          url: libUrl,
+          auto,
+          collection: entry.collection ?? entry.name,
+          count: typeof lib.count === "number" ? lib.count : undefined,
+          bytes: typeof lib.bytes === "number" ? lib.bytes : undefined,
+        });
       }
     } catch (e) {
       console.warn(`[preset] manifest ${entry.url} load failed:`, e);

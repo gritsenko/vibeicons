@@ -590,7 +590,11 @@ input, textarea {
   box-sizing: border-box;
 }
 .tile svg { width: 100%; height: 100%; pointer-events: none; display: block; }
-.tile svg path, .tile svg g { fill: currentColor !important; }
+/* Force the icon colour onto shapes that carry a fill, but never onto outline
+   libraries (MyUA Linear/Bold and friends draw with strokes on a fill="none"
+   root) — filling those turns every icon into a blob. */
+.tile svg:not([fill="none"]) path:not([fill="none"]),
+.tile svg:not([fill="none"]) g:not([fill="none"]) { fill: currentColor !important; }
 
 /* RenderedIcon: SVG is preprocessed to use currentColor + no intrinsic size */
 .icon-render > svg { width: 100%; height: 100%; display: block; }
@@ -734,7 +738,7 @@ input, textarea {
   border-radius: 4px;
 }
 .variation-cell-icon svg path,
-.variation-cell-icon svg g { fill: currentColor !important; }
+.variation-cell-icon svg:not([fill="none"]) g:not([fill="none"]) { fill: currentColor !important; }
 .variation-cell-label {
   font-size: 9.5px;
   font-family: var(--font-mono);
@@ -877,7 +881,8 @@ input, textarea {
   margin: auto;
   display: block;
 }
-.bg-card svg path, .bg-card svg g { fill: currentColor !important; }
+.bg-card svg:not([fill="none"]) path:not([fill="none"]),
+.bg-card svg:not([fill="none"]) g:not([fill="none"]) { fill: currentColor !important; }
 .bg-card-tag {
   position: absolute;
   top: 4px;
@@ -902,7 +907,8 @@ input, textarea {
 
 .size-cell { display: flex; flex-direction: column; align-items: center; gap: 6px; }
 .size-cell-icon { color: var(--text); display: grid; place-items: center; }
-.size-cell-icon svg path, .size-cell-icon svg g { fill: currentColor !important; }
+.size-cell-icon svg:not([fill="none"]) path:not([fill="none"]),
+.size-cell-icon svg:not([fill="none"]) g:not([fill="none"]) { fill: currentColor !important; }
 .size-cell-label { font-size: 10px; color: var(--text-mute); font-family: var(--font-mono); }
 
 .color-row {
@@ -1726,7 +1732,8 @@ input, textarea {
   color: var(--text);
 }
 .quick-cell svg { width: 100%; height: 100%; }
-.quick-cell svg path, .quick-cell svg g { fill: currentColor !important; }
+.quick-cell svg:not([fill="none"]) path:not([fill="none"]),
+.quick-cell svg:not([fill="none"]) g:not([fill="none"]) { fill: currentColor !important; }
 .quick-cell-x {
   position: absolute;
   top: -4px; right: -4px;
@@ -2172,3 +2179,75 @@ input, textarea {
   margin-bottom: 8px;
 }
 .export-section .color-row { gap: 6px; }
+
+/* ===== PRESET CATALOG ===== */
+.preset-catalog {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  text-align: left;
+}
+.preset-catalog-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.preset-group {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.preset-group-title {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-mute);
+  margin-bottom: 2px;
+}
+.preset-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  background: var(--bg-elev-2);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  padding: 7px 8px 7px 12px;
+}
+.preset-item-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+.preset-item-name {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+}
+.preset-item-meta {
+  font-size: 11.5px;
+  color: var(--text-mute);
+}
+.btn-sm {
+  padding: 4px 9px;
+  font-size: 11.5px;
+  flex-shrink: 0;
+}
+.btn-sm svg { width: 12px; height: 12px; }
+
+.empty-catalog {
+  max-width: 520px;
+  margin: 22px auto 18px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  background: var(--bg-elev-1);
+}
+.settings-row-stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 12px;
+}

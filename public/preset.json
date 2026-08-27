@@ -1,11 +1,24 @@
 {
   "version": 1,
-  "_comment": "Libraries the app imports on a cold start (no local cache yet). Entries are fetched relative to the app base URL; kind:\"manifest\" points at an index.json listing several libraries, kind:\"library\" (default) at a single import-ready JSON.",
+  "_comment": "The icon catalog: libraries the app offers in the empty state and in Settings. Entries are fetched relative to the app base URL; kind:\"manifest\" points at an index.json listing several libraries, kind:\"library\" (default) at a single import-ready JSON. Add \"auto\": true to import an entry automatically on a first run — off by default, so nothing multi-megabyte is pulled without the user asking.",
   "sources": [
     {
       "kind": "manifest",
       "url": "libraries/index.json",
-      "name": "Ant Design Icons"
+      "name": "Ant Design Icons",
+      "collection": "Ant Design (MIT)"
+    },
+    {
+      "kind": "manifest",
+      "url": "libraries/core-index.json",
+      "name": "Core Icons",
+      "collection": "Core · Flex · Plump"
+    },
+    {
+      "kind": "manifest",
+      "url": "libraries/myua-index.json",
+      "name": "MyUA Icons",
+      "collection": "MyUA"
     }
   ]
 }

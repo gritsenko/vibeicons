@@ -560,8 +560,8 @@ export function App() {
     [sources, showToast],
   );
 
-  // clearAll is defined further down so it can call loadPresetLibraries
-  // (which depends on handleImport defined later in this component).
+  // clearAll is defined further down, next to the preset import (both depend on
+  // handleImport, defined later in this component).
 
   // === Theme & accent ===
   useEffect(() => {
@@ -885,11 +885,12 @@ export function App() {
     [sources, showToast],
   );
 
-  // === Preset libraries ===
-  // public/preset.json (checked into the repo) lists what the app initialises
-  // itself with; by default it points at the generated Ant Design manifest in
-  // public/libraries/index.json. Applied automatically on a cold start, and
-  // manually from the empty-state CTA / the Settings modal.
+  // === Preset libraries (the icon catalog) ===
+  // public/preset.json (checked into the repo) lists every library the app
+  // ships with — the generated Ant Design and Core/Flex/Plump manifests under
+  // public/libraries/. The list is rendered as a catalog in the empty state and
+  // in Settings; the user imports the ones they want. Entries flagged
+  // `auto: true` are imported once on a cold start (none are, by default).
   const [preset, setPreset] = useState<{ loaded: boolean; sources: PresetSource[] }>({
     loaded: false,
     sources: [],
@@ -906,49 +907,80 @@ export function App() {
     };
   }, []);
 
-  const [presetLoading, setPresetLoading] = useState(false);
-  const loadPresetLibraries = useCallback(async (): Promise<number> => {
-    setPresetLoading(true);
-    try {
-      // The manual buttons can fire before the preset.json fetch resolves.
-      let entries = preset.sources;
-      if (!preset.loaded) {
-        entries = await loadPresetSources();
-        setPreset({ loaded: true, sources: entries });
+  // Import is per library: the catalog (empty state / Settings) drives it, and
+  // `presetBusy` holds the source names currently in flight so each row can
+  // show its own spinner.
+  const [presetBusy, setPresetBusy] = useState<ReadonlySet<string>>(() => new Set());
+  const presetLoading = presetBusy.size > 0;
+
+  const importPresetSources = useCallback(
+    async (entries?: PresetSource[]): Promise<number> => {
+      let list = entries;
+      if (!list) {
+        // The catalog can ask for "everything" before the preset.json fetch resolves.
+        let all = preset.sources;
+        if (!preset.loaded) {
+          all = await loadPresetSources();
+          setPreset({ loaded: true, sources: all });
+        }
+        list = all;
       }
-      if (entries.length === 0) return 0;
+      // Skip libraries whose source is already imported so repeat clicks are
+      // idempotent instead of producing "Core Line (2)" duplicates.
+      const pending = list.filter((e) => !sources[e.name]);
+      if (pending.length === 0) return 0;
+      setPresetBusy((prev) => {
+        const next = new Set(prev);
+        for (const e of pending) next.add(e.name);
+        return next;
+      });
       const taken = new Set<string>();
       let imported = 0;
-      for (const entry of entries) {
-        // Skip libraries whose source is already loaded so repeat clicks are
-        // idempotent instead of producing "Ant Design Outlined (2)" duplicates.
-        if (sources[entry.name]) continue;
-        const r = await fetch(entry.url);
-        if (!r.ok) {
-          console.warn(`[preset] ${entry.name} → HTTP ${r.status}`);
-          continue;
+      try {
+        for (const entry of pending) {
+          try {
+            const r = await fetch(entry.url);
+            if (!r.ok) {
+              console.warn(`[preset] ${entry.name} → HTTP ${r.status}`);
+              showToast(`Could not load ${entry.name} (HTTP ${r.status})`);
+              continue;
+            }
+            const text = await r.text();
+            const result = handleImport(text, entry.name + ".json", {
+              takenNames: taken,
+              silent: true,
+            });
+            if (result) imported += result.imported;
+          } catch (e) {
+            console.warn(`[preset] ${entry.name} import failed:`, e);
+          } finally {
+            setPresetBusy((prev) => {
+              const next = new Set(prev);
+              next.delete(entry.name);
+              return next;
+            });
+          }
         }
-        const text = await r.text();
-        const result = handleImport(text, entry.name + ".json", {
-          takenNames: taken,
-          silent: true,
+      } finally {
+        setPresetBusy((prev) => {
+          if (prev.size === 0) return prev;
+          const next = new Set(prev);
+          for (const e of pending) next.delete(e.name);
+          return next;
         });
-        if (result) imported += result.imported;
       }
-      if (imported > 0) showToast(`Loaded ${imported} preset icons`);
+      if (imported > 0) showToast(`Imported ${imported} icons`);
       return imported;
-    } catch (e) {
-      console.warn("Preset library load failed:", e);
-      return 0;
-    } finally {
-      setPresetLoading(false);
-    }
-  }, [handleImport, preset, sources, showToast]);
+    },
+    [handleImport, preset, sources, showToast],
+  );
 
-  // First run: no local cache yet → import the preset once. Guarded by a
-  // localStorage flag that survives the regular "Clear all data" (so an
-  // intentionally emptied library stays empty) and is dropped only by the full
-  // reset in Settings.
+  // First run: no local cache yet → import the libraries preset.json marks as
+  // `auto` (none by default: the catalog in the empty state is what a first-run
+  // visitor sees, so nothing multi-megabyte is pulled behind their back).
+  // Guarded by a localStorage flag that survives the regular "Clear all data"
+  // (so an intentionally emptied library stays empty) and is dropped only by
+  // the full reset in Settings.
   const presetInitRef = useRef(false);
   useEffect(() => {
     if (!initialLoad.done || !preset.loaded || presetInitRef.current) return;
@@ -960,10 +992,15 @@ export function App() {
       return;
     }
     if (preset.sources.length === 0) return; // preset unreachable — retry next launch
-    void loadPresetLibraries().then((imported) => {
+    const auto = preset.sources.filter((p) => p.auto);
+    if (auto.length === 0) {
+      markPresetInitialized();
+      return;
+    }
+    void importPresetSources(auto).then((imported) => {
       if (imported > 0) markPresetInitialized();
     });
-  }, [initialLoad, preset, loadPresetLibraries]);
+  }, [initialLoad, preset, importPresetSources]);
 
   const clearAll = useCallback(() => {
     setIcons([]);
@@ -1659,8 +1696,10 @@ export function App() {
         {isEmpty ? (
           <LibraryEmpty
             loading={presetLoading}
-            presetSourceNames={preset.sources.map((p) => p.name)}
-            onLoadPreset={() => void loadPresetLibraries()}
+            presetSources={preset.sources}
+            importedSources={sources}
+            presetBusy={presetBusy}
+            onImportPreset={(entries) => void importPresetSources(entries)}
             onPickFile={() => document.getElementById("vibe-file-input")?.click()}
             onPickFolder={() => document.getElementById("vibe-folder-input")?.click()}
           />
@@ -1817,12 +1856,12 @@ export function App() {
           setsCount={sets.length}
           groupsMeta={groupsMeta}
           favoritesCount={favorites.length}
-          presetSourceNames={preset.sources.map((p) => p.name)}
-          presetLoading={presetLoading}
+          presetSources={preset.sources}
+          presetBusy={presetBusy}
           resetting={resetting}
           onClose={() => setShowSettings(false)}
           onClearAll={clearAll}
-          onLoadPreset={() => void loadPresetLibraries()}
+          onImportPreset={(entries) => void importPresetSources(entries)}
           onFullReset={() => void resetEverything()}
         />
       )}

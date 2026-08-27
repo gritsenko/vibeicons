@@ -1,5 +1,7 @@
+import type { PresetSource } from "../lib/preset";
 import type { GroupsMetaMap, SourcesMap } from "../types";
 import { Icon } from "./Icon";
+import { PresetCatalog } from "./PresetCatalog";
 
 interface Props {
   iconCount: number;
@@ -7,13 +9,14 @@ interface Props {
   setsCount: number;
   groupsMeta: GroupsMetaMap;
   favoritesCount: number;
-  /** Source names listed by public/preset.json (already expanded from manifests). */
-  presetSourceNames: string[];
-  presetLoading: boolean;
+  /** Libraries listed by public/preset.json (already expanded from manifests). */
+  presetSources: PresetSource[];
+  /** Source names whose import is currently in flight. */
+  presetBusy: ReadonlySet<string>;
   resetting: boolean;
   onClose: () => void;
   onClearAll: () => void;
-  onLoadPreset: () => void;
+  onImportPreset: (entries: PresetSource[]) => void;
   onFullReset: () => void;
 }
 
@@ -23,17 +26,14 @@ export function SettingsModal({
   setsCount,
   groupsMeta,
   favoritesCount,
-  presetSourceNames,
-  presetLoading,
+  presetSources,
+  presetBusy,
   resetting,
   onClose,
   onClearAll,
-  onLoadPreset,
+  onImportPreset,
   onFullReset,
 }: Props) {
-  const presetTotal = presetSourceNames.length;
-  const presetLoadedCount = presetSourceNames.filter((n) => sources[n]).length;
-  const allPresetLoaded = presetTotal > 0 && presetLoadedCount === presetTotal;
   const sourceList = Object.values(sources);
   return (
     <div className="modal-backdrop" onClick={onClose}>
@@ -72,50 +72,29 @@ export function SettingsModal({
               )}
             </div>
           </section>
-          <section className="settings-row">
+          <section className="settings-row settings-row-stack">
             <div>
-              <div className="settings-row-title">Preset library</div>
+              <div className="settings-row-title">Icon catalog</div>
               <div className="settings-row-hint">
-                {presetTotal === 0 ? (
-                  <>
-                    <code>public/preset.json</code> lists nothing loadable right now (missing file
-                    or unreachable URLs). Check the console for details.
-                  </>
-                ) : (
-                  <>
-                    Imported automatically on a first run and re-loadable here. Configured in{" "}
-                    <code>public/preset.json</code>: {presetSourceNames.join(", ")}. Already-loaded
-                    sources are skipped, so this is safe to click any time.{" "}
-                    <strong>
-                      {presetLoadedCount}/{presetTotal}
-                    </strong>{" "}
-                    loaded.
-                  </>
-                )}
+                Libraries bundled with the app, configured in <code>public/preset.json</code>.
+                Import what you need — already-imported sources are skipped, so this is safe to
+                use any time.
               </div>
             </div>
-            <button
-              className="btn btn-primary"
-              onClick={onLoadPreset}
-              disabled={presetLoading || allPresetLoaded || presetTotal === 0}
-            >
-              <Icon name={presetLoading ? "clock" : "download"} size={13} />
-              {presetLoading
-                ? "Loading…"
-                : allPresetLoaded
-                  ? "All loaded"
-                  : presetLoadedCount > 0
-                    ? "Load missing"
-                    : "Load preset"}
-            </button>
+            <PresetCatalog
+              entries={presetSources}
+              imported={sources}
+              busy={presetBusy}
+              onImport={onImportPreset}
+            />
           </section>
           <section className="settings-row danger">
             <div>
               <div className="settings-row-title">Clear library</div>
               <div className="settings-row-hint">
                 Removes all imported icons, sets, groups, sources, favorites, collections and
-                recents. The library is left empty and stays empty on reload — load the preset
-                again from the section above if you want it back.
+                recents. The library is left empty and stays empty on reload — import again from
+                the catalog above if you want it back.
               </div>
             </div>
             <button
@@ -132,8 +111,8 @@ export function SettingsModal({
               <div className="settings-row-title">Full reset</div>
               <div className="settings-row-hint">
                 Wipes IndexedDB and every local setting, including the “preset already applied”
-                flag, then reloads the app — it comes back up exactly like a fresh install and
-                re-imports the preset library.
+                flag, then reloads the app — it comes back up exactly like a fresh install,
+                showing the icon catalog on an empty library.
               </div>
             </div>
             <button

@@ -69,8 +69,9 @@ for (const { theme, source, setLabel } of THEMES) {
   };
 
   const fileName = `ant-${theme}.json`;
-  fs.writeFileSync(path.join(OUT, fileName), JSON.stringify(lib));
-  manifest.push({ file: fileName, source, count: icons.length });
+  const json = JSON.stringify(lib);
+  fs.writeFileSync(path.join(OUT, fileName), json);
+  manifest.push({ file: fileName, source, count: icons.length, bytes: Buffer.byteLength(json) });
   console.log(`[ant-icons] ${icons.length} icons -> ${fileName}`);
 }
 

@@ -1,50 +1,63 @@
+import type { PresetSource } from "../lib/preset";
+import type { SourcesMap } from "../types";
 import { Icon } from "./Icon";
+import { PresetCatalog } from "./PresetCatalog";
 
 interface Props {
-  /** Source names listed by public/preset.json (already expanded from manifests). */
-  presetSourceNames: string[];
-  onLoadPreset: () => void;
+  /** Libraries listed by public/preset.json (already expanded from manifests). */
+  presetSources: PresetSource[];
+  /** Sources already in the library — rendered as "Imported" in the catalog. */
+  importedSources: SourcesMap;
+  /** Source names whose import is currently in flight. */
+  presetBusy: ReadonlySet<string>;
+  onImportPreset: (entries: PresetSource[]) => void;
   onPickFile: () => void;
   onPickFolder: () => void;
   loading: boolean;
 }
 
 export function LibraryEmpty({
-  presetSourceNames,
-  onLoadPreset,
+  presetSources,
+  importedSources,
+  presetBusy,
+  onImportPreset,
   onPickFile,
   onPickFolder,
   loading,
 }: Props) {
-  const hasPreset = presetSourceNames.length > 0;
+  const hasPreset = presetSources.length > 0;
   return (
     <div className="grid-wrap">
       <div className="empty-state empty-library">
         <Icon name="inbox" size={48} />
         <h3>Your library is empty</h3>
         <p>
-          Drop a JSON file with icon definitions in the sidebar, use <strong>Import JSON</strong>{" "}
-          or <strong>Import folder</strong> (SVG + optional .txt tags) in the top bar
           {hasPreset ? (
             <>
-              , or load the preset library ({presetSourceNames.join(", ")}).
+              Pick one or more of the bundled libraries below — they are imported into this
+              browser and stay available offline. You can also drop a JSON file in the sidebar,
+              or use <strong>Import JSON</strong> / <strong>Import folder</strong> (SVG +
+              optional .txt tags) in the top bar.
             </>
           ) : (
-            <>.</>
+            <>
+              Drop a JSON file with icon definitions in the sidebar, or use{" "}
+              <strong>Import JSON</strong> / <strong>Import folder</strong> (SVG + optional .txt
+              tags) in the top bar.
+            </>
           )}
         </p>
+        {hasPreset && (
+          <div className="empty-catalog">
+            <PresetCatalog
+              entries={presetSources}
+              imported={importedSources}
+              busy={presetBusy}
+              onImport={onImportPreset}
+            />
+          </div>
+        )}
         <div className="empty-actions">
-          {hasPreset && (
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={onLoadPreset}
-              disabled={loading}
-            >
-              <Icon name={loading ? "clock" : "download"} size={13} />
-              {loading ? "Loading…" : "Load preset icons"}
-            </button>
-          )}
           <button type="button" className="btn" onClick={onPickFile} disabled={loading}>
             <Icon name="upload" size={13} />
             Import a JSON file
@@ -55,8 +68,8 @@ export function LibraryEmpty({
           </button>
         </div>
         <p className="empty-credit">
-          Preset libraries are configured in <code>public/preset.json</code>; the bundled default
-          is sourced from the open-source{" "}
+          The catalog is configured in <code>public/preset.json</code>; the bundled default is
+          sourced from the open-source{" "}
           <a
             href="https://github.com/ant-design/ant-design-icons"
             target="_blank"

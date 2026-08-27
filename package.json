@@ -5,13 +5,14 @@
   "type": "module",
   "description": "VibeIcons — Icon Manager PWA",
   "scripts": {
-    "predev": "node scripts/build-ant-icons.mjs",
+    "predev": "node scripts/build-ant-icons.mjs && node scripts/build-icon-packs.mjs",
     "dev": "vite",
-    "prebuild": "node scripts/build-ant-icons.mjs",
+    "prebuild": "node scripts/build-ant-icons.mjs && node scripts/build-icon-packs.mjs",
     "build": "tsc -b && vite build",
     "preview": "vite preview",
     "typecheck": "tsc -b --noEmit",
-    "build:icons": "node scripts/build-ant-icons.mjs"
+    "build:deploy": "node scripts/build-ant-icons.mjs && node scripts/build-icon-packs.mjs && tsc -b && vite build --base=/",
+    "build:icons": "node scripts/build-ant-icons.mjs && node scripts/build-icon-packs.mjs"
   },
   "dependencies": {
     "jszip": "^3.10.1",

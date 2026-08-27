@@ -1,0 +1,12 @@
+node_modules
+.git
+.github
+.design-bundle
+src
+scripts
+public
+index.html
+package-lock.json
+tsconfig*.json
+vite.config.ts
+*.md

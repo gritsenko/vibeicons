@@ -11,7 +11,9 @@ export function highlightSvg(s: string): string {
 export function colorizeContent(svgString: string, color: string): string {
   return svgString
     .replace(/fill="(?!none")[^"]*"/g, `fill="${color}"`)
-    .replace(/fill='(?!none')[^']*'/g, `fill='${color}'`);
+    .replace(/fill='(?!none')[^']*'/g, `fill='${color}'`)
+    .replace(/stroke="(?!none")[^"]*"/g, `stroke="${color}"`)
+    .replace(/stroke='(?!none')[^']*'/g, `stroke='${color}'`);
 }
 
 const RX_SVG_OPEN = /<svg\b([^>]*)>/i;
@@ -23,8 +25,11 @@ const RX_PRESERVE = /preserveAspectRatio="[^"]*"/i;
 /**
  * One-shot SVG normalization done at import time so per-render rewrites are
  * unnecessary. Strips width/height, ensures viewBox + preserveAspectRatio, and
- * rewrites every `fill="..."` (except `fill="none"`) to `currentColor`. The
- * resulting markup picks up its color from the parent's `style.color`.
+ * rewrites every `fill="..."` and `stroke="..."` (except the `"none"` ones) to
+ * `currentColor` — stroke included because whole libraries (MyUA Linear/Bold,
+ * most outline sets) draw with strokes and would otherwise keep their baked-in
+ * colour. The resulting markup picks up its colour from the parent's
+ * `style.color`.
  */
 export function preprocessSvgContent(content: string, w?: number, h?: number): string {
   if (!content) return content;
@@ -43,9 +48,11 @@ export function preprocessSvgContent(content: string, w?: number, h?: number): s
     return `<svg${a}>`;
   });
 
-  // currentColor swap (skip fill="none" / fill='none')
+  // currentColor swap (skip the "none" values, which carry shape semantics)
   out = out.replace(/fill="(?!none")[^"]*"/g, 'fill="currentColor"');
   out = out.replace(/fill='(?!none')[^']*'/g, "fill='currentColor'");
+  out = out.replace(/stroke="(?!none")[^"]*"/g, 'stroke="currentColor"');
+  out = out.replace(/stroke='(?!none')[^']*'/g, "stroke='currentColor'");
 
   return out;
 }
