@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import type { IconRecord, PreviewBg, Tweaks } from "../types";
 import { Icon } from "./Icon";
 import { RenderedIcon } from "./RenderedIcon";
+import { browseColor } from "../lib/color";
 import {
   highlightSvg,
   colorizeContent,
@@ -58,7 +59,8 @@ export function DetailPanel({
   copyText,
 }: Props) {
   const selKey = (selected.source ?? "") + "::" + selected.name;
-  const fgColor = tweaks.theme === "dark" ? "#e6e8ec" : "#1a1d23";
+  // Variations and the size ladder follow the picked colour like the grid does.
+  const browse = browseColor(color, tweaks.theme);
 
   const [pngExportSize, setPngExportSize] = useState(256);
   const [pngExportPadding, setPngExportPadding] = useState(0);
@@ -149,7 +151,7 @@ export function DetailPanel({
                   title={(v.source ?? "unknown") + " · " + v.name}
                 >
                   <div className="variation-cell-icon">
-                    <RenderedIcon icon={v} size={32} color={fgColor} />
+                    <RenderedIcon icon={v} size={32} color={browse} />
                   </div>
                   <div className="variation-cell-label">{v.source ?? "—"}</div>
                 </button>
@@ -183,7 +185,7 @@ export function DetailPanel({
           {[16, 24, 32, 48, 64].map((s) => (
             <div key={s} className="size-cell">
               <div className="size-cell-icon" style={{ width: s, height: s }}>
-                <RenderedIcon icon={selected} size={s} color={fgColor} />
+                <RenderedIcon icon={selected} size={s} color={browse} />
               </div>
               <div className="size-cell-label">{s}px</div>
             </div>

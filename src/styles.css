@@ -737,7 +737,7 @@ input, textarea {
   background-position: 0 0, 0 4px, 4px -4px, -4px 0;
   border-radius: 4px;
 }
-.variation-cell-icon svg path,
+.variation-cell-icon svg:not([fill="none"]) path:not([fill="none"]),
 .variation-cell-icon svg:not([fill="none"]) g:not([fill="none"]) { fill: currentColor !important; }
 .variation-cell-label {
   font-size: 9.5px;

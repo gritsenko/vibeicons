@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { IconRecord, Project, Tweaks } from "../types";
 import { Icon } from "./Icon";
 import { RenderedIcon } from "./RenderedIcon";
+import { browseColor } from "../lib/color";
 
 /** Stable fallback so hooks don’t see a new `{}` every render (that was resetting the rename field). */
 const EMPTY_ICON_ALIASES: Record<string, string> = Object.freeze({});
@@ -17,6 +18,8 @@ interface Props {
   onExport: (id: string) => void;
   onSetQuick: (id: string | null) => void;
   onOpenProject: (id: string) => void;
+  /** Icon colour picked in the detail panel (see lib/color.ts). */
+  color: string;
 }
 
 export function QuickCollectionPanel({
@@ -24,6 +27,7 @@ export function QuickCollectionPanel({
   icons,
   projects,
   theme,
+  color,
   onSetIconAlias,
   onRemove,
   onClear,
@@ -31,7 +35,7 @@ export function QuickCollectionPanel({
   onSetQuick,
   onOpenProject,
 }: Props) {
-  const fg = theme === "dark" ? "#e6e8ec" : "#1a1d23";
+  const fg = browseColor(color, theme);
 
   const aliases = project?.iconAliases ?? EMPTY_ICON_ALIASES;
   const [selectedKey, setSelectedKey] = useState<string | null>(null);

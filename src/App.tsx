@@ -42,6 +42,7 @@ import {
   markPresetInitialized,
   type PresetSource,
 } from "./lib/preset";
+import { browseColor } from "./lib/color";
 import {
   collectFolderEntriesFromDataTransfer,
   importSvgFolderFromEntries,
@@ -1290,7 +1291,9 @@ export function App() {
     [filtered],
   );
 
-  const fgGridColor = tweaks.theme === "dark" ? "#e6e8ec" : "#1a1d23";
+  // The picked colour paints every browsing surface (grid, variations, size
+  // previews), falling back to the theme foreground for the neutral swatches.
+  const fgGridColor = browseColor(color, tweaks.theme);
   const tileMin = TILE_MIN_BY_DENSITY[tweaks.density];
   const isHome = activeNav === "home";
   const isEmpty = icons.length === 0;
@@ -1787,6 +1790,7 @@ export function App() {
                 icons={quickIcons}
                 projects={projects}
                 theme={tweaks.theme}
+                color={color}
                 onSetIconAlias={(iconKey, name) => {
                   if (quickProj) setProjectIconAlias(quickProj.id, iconKey, name);
                 }}
