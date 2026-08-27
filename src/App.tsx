@@ -57,6 +57,7 @@ import { IconGrid } from "./components/IconGrid";
 import { GroupedIconGrid } from "./components/GroupedIconGrid";
 import { HomeView } from "./components/HomeView";
 import { LibraryEmpty } from "./components/LibraryEmpty";
+import { CatalogModal } from "./components/CatalogModal";
 import { ProjectsSection } from "./components/ProjectsSection";
 import { QuickCollectionPanel } from "./components/QuickCollectionPanel";
 import { TileContextMenu } from "./components/TileContextMenu";
@@ -188,6 +189,10 @@ export function App() {
   const [toast, setToast] = useState<string | null>(null);
   const [dragging, setDragging] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  // The onboarding catalog. Modal, not part of the empty state: the library
+  // stops being empty after the first pack lands and the picker has to survive
+  // that so the user can queue up the rest.
+  const [showCatalog, setShowCatalog] = useState(false);
   const [groupBy, setGroupBy] = useState<boolean>(() =>
     readJson<boolean>(STORAGE_KEY + ".groupBy", false),
   );
@@ -1003,6 +1008,16 @@ export function App() {
     });
   }, [initialLoad, preset, importPresetSources]);
 
+  // Open the catalog once per session when the app comes up on an empty
+  // library and there is something to offer.
+  const catalogAutoRef = useRef(false);
+  useEffect(() => {
+    if (!initialLoad.done || !preset.loaded || catalogAutoRef.current) return;
+    if (preset.sources.length === 0) return;
+    catalogAutoRef.current = true;
+    if (icons.length === 0) setShowCatalog(true);
+  }, [initialLoad.done, preset, icons.length]);
+
   const clearAll = useCallback(() => {
     setIcons([]);
     setSetsMeta({});
@@ -1699,10 +1714,8 @@ export function App() {
         {isEmpty ? (
           <LibraryEmpty
             loading={presetLoading}
-            presetSources={preset.sources}
-            importedSources={sources}
-            presetBusy={presetBusy}
-            onImportPreset={(entries) => void importPresetSources(entries)}
+            hasCatalog={preset.sources.length > 0}
+            onOpenCatalog={() => setShowCatalog(true)}
             onPickFile={() => document.getElementById("vibe-file-input")?.click()}
             onPickFolder={() => document.getElementById("vibe-folder-input")?.click()}
           />
@@ -1851,6 +1864,19 @@ export function App() {
             {toast}
           </div>
         </div>
+      )}
+
+      {showCatalog && (
+        <CatalogModal
+          entries={preset.sources}
+          imported={sources}
+          busy={presetBusy}
+          iconCount={icons.length}
+          onImport={(entries) => void importPresetSources(entries)}
+          onPickFile={() => document.getElementById("vibe-file-input")?.click()}
+          onPickFolder={() => document.getElementById("vibe-folder-input")?.click()}
+          onClose={() => setShowCatalog(false)}
+        />
       )}
 
       {showSettings && (

@@ -1,43 +1,33 @@
-import type { PresetSource } from "../lib/preset";
-import type { SourcesMap } from "../types";
 import { Icon } from "./Icon";
-import { PresetCatalog } from "./PresetCatalog";
 
 interface Props {
-  /** Libraries listed by public/preset.json (already expanded from manifests). */
-  presetSources: PresetSource[];
-  /** Sources already in the library — rendered as "Imported" in the catalog. */
-  importedSources: SourcesMap;
-  /** Source names whose import is currently in flight. */
-  presetBusy: ReadonlySet<string>;
-  onImportPreset: (entries: PresetSource[]) => void;
+  /** Whether public/preset.json offers anything — gates the catalog CTA. */
+  hasCatalog: boolean;
+  onOpenCatalog: () => void;
   onPickFile: () => void;
   onPickFolder: () => void;
   loading: boolean;
 }
 
 export function LibraryEmpty({
-  presetSources,
-  importedSources,
-  presetBusy,
-  onImportPreset,
+  hasCatalog,
+  onOpenCatalog,
   onPickFile,
   onPickFolder,
   loading,
 }: Props) {
-  const hasPreset = presetSources.length > 0;
   return (
     <div className="grid-wrap">
       <div className="empty-state empty-library">
         <Icon name="inbox" size={48} />
         <h3>Your library is empty</h3>
         <p>
-          {hasPreset ? (
+          {hasCatalog ? (
             <>
-              Pick one or more of the bundled libraries below — they are imported into this
-              browser and stay available offline. You can also drop a JSON file in the sidebar,
-              or use <strong>Import JSON</strong> / <strong>Import folder</strong> (SVG +
-              optional .txt tags) in the top bar.
+              Import one or more of the bundled libraries — they live in this browser and stay
+              available offline. You can also drop a JSON file in the sidebar, or use{" "}
+              <strong>Import JSON</strong> / <strong>Import folder</strong> (SVG + optional .txt
+              tags) in the top bar.
             </>
           ) : (
             <>
@@ -47,17 +37,18 @@ export function LibraryEmpty({
             </>
           )}
         </p>
-        {hasPreset && (
-          <div className="empty-catalog">
-            <PresetCatalog
-              entries={presetSources}
-              imported={importedSources}
-              busy={presetBusy}
-              onImport={onImportPreset}
-            />
-          </div>
-        )}
         <div className="empty-actions">
+          {hasCatalog && (
+            <button
+              type="button"
+              className="btn btn-primary"
+              onClick={onOpenCatalog}
+              disabled={loading}
+            >
+              <Icon name={loading ? "clock" : "layers"} size={13} />
+              {loading ? "Importing…" : "Browse icon libraries"}
+            </button>
+          )}
           <button type="button" className="btn" onClick={onPickFile} disabled={loading}>
             <Icon name="upload" size={13} />
             Import a JSON file

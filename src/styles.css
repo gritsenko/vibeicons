@@ -2237,17 +2237,34 @@ input, textarea {
   flex-shrink: 0;
 }
 .btn-sm svg { width: 12px; height: 12px; }
-
-.empty-catalog {
-  max-width: 520px;
-  margin: 22px auto 18px;
-  padding: 14px;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  background: var(--bg-elev-1);
-}
 .settings-row-stack {
   flex-direction: column;
   align-items: stretch;
   gap: 12px;
 }
+
+.modal-wide { width: 620px; }
+.modal-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 18px;
+  border-top: 1px solid var(--border);
+}
+.catalog-modal-body {
+  padding: 16px 18px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.catalog-modal-own {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+  padding-top: 12px;
+  border-top: 1px solid var(--border);
+}
+.catalog-modal-own-actions { display: flex; gap: 8px; flex-wrap: wrap; }
